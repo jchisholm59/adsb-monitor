@@ -1,0 +1,18 @@
+# Home Assistant automation: clears a persistent alert when its Dismiss button is tapped.
+# The alerts give the button the action DISMISS_<tag>; this sends clear_notification for that tag.
+# One copy covers adsb-monitor and ais-monitor alerts. Replace notify.mobile_app_YOUR_PHONE.
+alias: Alert Dismiss button
+mode: queued
+max: 20
+triggers:
+  - trigger: event
+    event_type: mobile_app_notification_action
+conditions:
+  - condition: template
+    value_template: "{{ (trigger.event.data.action | default('')).startswith('DISMISS_') }}"
+actions:
+  - action: notify.mobile_app_YOUR_PHONE
+    data:
+      message: clear_notification
+      data:
+        tag: "{{ trigger.event.data.action[8:] }}"

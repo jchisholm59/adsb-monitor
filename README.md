@@ -165,7 +165,11 @@ downloaded aircraft database (~8 MB, refreshed weekly) and your airport.
    webhook ID and put in your phone's notify action (`notify.mobile_app_<your_phone>`).
 2. In the monitor's `.env`: `HA_WEBHOOK=http://<your-ha>:8123/api/webhook/<that id>`, then
    `pm2 restart adsb-monitor --update-env`.
-3. In the card's **Alerts** tab press **Send a test**.
+3. Optionally add [`alert-dismiss.yaml`](alert-dismiss.yaml) too. The example makes alerts **persistent** on the phone
+   (they stay until you tap **Dismiss**; **Open** goes to the dashboard) and sends a plain copy to a Wear OS watch, since
+   Android doesn't pass persistent notifications on to the watch. Without that automation the Dismiss button does
+   nothing, so drop `persistent` if you don't want it.
+4. In the card's **Alerts** tab press **Send a test**.
 
 The webhook is `local_only`, so the monitor must be on the same network as HA. It needs no HA token.
 
