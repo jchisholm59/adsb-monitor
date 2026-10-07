@@ -20,9 +20,9 @@ Two pieces that work together:
 
 ![Map tab: live aircraft with range rings, altitude-coloured trails and a selected flight](docs/map.png)
 
-| Flight status | Light theme |
-|---|---|
-| ![Flight tab: route, progress, estimated arrival and live data](docs/flight.png) | ![Map tab in Home Assistant's light theme](docs/map-light.png) |
+| Map filter | Flight status | Light theme |
+|---|---|---|
+| ![Map filter: chosen classes and airlines only, with counts and logos](docs/map-filter.png) | ![Flight tab: route, progress, estimated arrival and live data](docs/flight.png) | ![Map tab in Home Assistant's light theme](docs/map-light.png) |
 
 | Coverage | Aircraft | Alerts |
 |---|---|---|
