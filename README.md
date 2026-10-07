@@ -20,6 +20,8 @@ Two pieces that work together:
 
 ![Map tab: live aircraft with range rings, altitude-coloured trails and a selected flight](docs/map.png)
 
+![Satellite view: a departure climbing out of Halifax for Ottawa, with the Swissair 111 landmark off the coast](docs/satellite.png)
+
 | Map filter | Jump to aircraft (from the list's 📍) |
 |---|---|
 | ![Map filter: chosen classes and airlines only, with counts and logos](docs/map-filter.png) | ![The map centred and zoomed on an aircraft picked from the Aircraft list](docs/locate.png) |
