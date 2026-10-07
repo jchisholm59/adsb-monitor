@@ -714,6 +714,10 @@ class SkyAwareCard extends HTMLElement {
         table { width: 100%; border-collapse: collapse; font-size: .85em; }
         th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--divider-color); white-space: nowrap; }
         th { color: var(--secondary-text-color); font-weight: 500; position: sticky; top: 0; background: var(--secondary-background-color); cursor: pointer; z-index: 1; }
+        th.pin, td.pin { width: 30px; padding: 2px 0 2px 6px; }
+        td.pin button { border: none; background: transparent; color: var(--primary-color); cursor: pointer; padding: 3px; border-radius: 8px; display: flex; }
+        td.pin button:hover { background: color-mix(in srgb, var(--primary-color) 18%, transparent); }
+        td.pin ha-icon { --mdc-icon-size: 20px; }
         th.r, td.r { text-align: right; font-variant-numeric: tabular-nums; }
         th.on { color: var(--primary-color); }
         tbody tr { cursor: pointer; }
@@ -935,6 +939,7 @@ class SkyAwareCard extends HTMLElement {
       this._renderList();
     });
     this.$("lbody").addEventListener("click", (e) => {
+      if (e.target.closest("[data-act]")) return; // the map pin has its own action
       const tr = e.target.closest("tr[data-hex]");
       if (!tr) return;
       this._select(tr.dataset.hex);
@@ -950,6 +955,8 @@ class SkyAwareCard extends HTMLElement {
         this._follow = !this._follow;
         if (this._follow && this._selLast) this._centerOn(this._selLast, false);
         this._renderMap();
+      } else if (act === "locate") {
+        this._locate(a.dataset.hex);
       } else if (act === "showmap") {
         this._follow = true;
         if (this._selLast) this._centerOn(this._selLast, false);
@@ -1065,6 +1072,19 @@ class SkyAwareCard extends HTMLElement {
   _pt(lat, lon, v, w, h) {
     const S = 256 * 2 ** v.z;
     return [(mx(lon) - v.x) * S + w / 2, (my(lat) - v.y) * S + h / 2];
+  }
+
+  // From the Aircraft list: select it, centre the map on it (zoomed in to at least z9) and pulse a ring around it.
+  _locate(hex) {
+    const a = this._byHex?.get(hex);
+    if (!a || a.lat === undefined) return;
+    this._select(hex);
+    this._follow = false;
+    const v = this._view || this._defaultView();
+    this._view = { x: mx(a.lon), y: my(a.lat), z: Math.max(v?.z || 9, 9) };
+    this._flash = { hex, until: Date.now() + 3500 };
+    setTimeout(() => this._renderMap(), 3600);
+    this._setTab("map");
   }
 
   _centerOn(ac, render = true) {
@@ -1309,6 +1329,8 @@ class SkyAwareCard extends HTMLElement {
       this._hits.push([a.hex, p[0], p[1]]);
       g += `<g class="ac${stale ? " stale" : ""}" transform="translate(${p[0].toFixed(1)},${p[1].toFixed(1)})">`;
       if (isSel) g += `<circle class="selring" r="${17 * sc}"/>`;
+      if (this._flash?.hex === a.hex && Date.now() < this._flash.until)
+        g += `<circle r="18" fill="none" stroke="var(--primary-color)" stroke-width="3"><animate attributeName="r" values="14;46" dur="1.1s" repeatCount="indefinite"/><animate attributeName="opacity" values="1;0" dur="1.1s" repeatCount="indefinite"/></circle>`;
       if (SQUAWKS[a.squawk]) g += `<circle r="${19 * sc}" fill="none" stroke="var(--sa-bad)" stroke-width="2.5"/>`;
       g += `<path d="${SHAPES[shape]}" transform="rotate(${rot.toFixed(0)}) scale(${(sc * (isSel ? 1.25 : 1)).toFixed(2)})" fill="${altColor(a.alt_baro, isSel)}" stroke="${mlat ? "#4040ff" : this._dark ? "#000" : "#222"}"/>`;
       if (this._labels || isSel) {
@@ -1430,7 +1452,7 @@ class SkyAwareCard extends HTMLElement {
     ].join("");
 
     const cols = [
-      ["cs", "Flight"], ["cls", "Class"], ["route", "Route"], ["type", "Type"], ["reg", "Reg"], ["sq", "Squawk"], ["alt", "Altitude", 1], ["vr", "V/S", 1],
+      ["pin", ""], ["cs", "Flight"], ["cls", "Class"], ["route", "Route"], ["type", "Type"], ["reg", "Reg"], ["sq", "Squawk"], ["alt", "Altitude", 1], ["vr", "V/S", 1],
       ["gs", "Speed", 1], ["trk", "Track", 1], ["dist", "Dist", 1], ["rssi", "RSSI", 1], ["msgs", "Msgs", 1], ["seen", "Seen", 1],
     ];
     const key = (a, k) => {
@@ -1464,13 +1486,14 @@ class SkyAwareCard extends HTMLElement {
       const x = key(a, k), y = key(b, k);
       return (typeof x === "string" ? x.localeCompare(y) : x - y) * dir;
     });
-    this.$("lhead").innerHTML = `<tr>${cols.map(([c, l, r]) => `<th data-k="${c}" class="${r ? "r" : ""}${c === k ? " on" : ""}">${l}${c === k ? (dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr>`;
+    this.$("lhead").innerHTML = `<tr>${cols.map(([c, l, r]) => c === "pin" ? `<th class="pin"></th>` : `<th data-k="${c}" class="${r ? "r" : ""}${c === k ? " on" : ""}">${l}${c === k ? (dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr>`;
     this.$("lbody").innerHTML = rows.map((a) => {
       const info = this._info(a.hex), rt = this._route(a);
       const vr = vrate(a);
       const em = SQUAWKS[a.squawk];
       const cls = [a.hex === this._sel ? "sel" : "", a.seen > 30 ? "stale" : "", em ? "emerg" : ""].join(" ");
       return `<tr data-hex="${esc(a.hex)}" class="${cls}">
+        <td class="pin">${a.lat !== undefined ? `<button data-act="locate" data-hex="${esc(a.hex)}" title="Show on the map"><ha-icon icon="mdi:map-marker-radius"></ha-icon></button>` : ""}</td>
         <td><span class="sw" style="background:${altColor(a.alt_baro)}"></span><b>${esc(callsign(a) || "")}</b>${callsign(a) ? "" : `<span class="muted">${esc(a.hex.toUpperCase())}</span>`}${(a.mlat || []).includes("lat") ? `<span class="tag">MLAT</span>` : ""}</td>
         <td>${this._tag(this._class(a))}</td>
         <td>${rt ? `${esc(rt.o.iata || rt.o.icao)} → ${esc(rt.d.iata || rt.d.icao)}` : `<span class="muted">–</span>`}</td>

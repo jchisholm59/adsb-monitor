@@ -42,7 +42,7 @@ Two pieces that work together:
   column: flight, class, route, type, registration, squawk, altitude, vertical rate, speed, track, distance, RSSI,
   messages, last seen. Each aircraft gets a class tag, **Commercial, Military, Helicopter, Private, Unclassified or
   Unknown**, and chips with counts filter the list by class. The tag also shows in the map popup and on the Flight
-  tab.
+  tab. Tap a row for its Flight page, or its 📍 pin to jump to it on the map (centred, zoomed in, selected).
   - Military comes from the monitor's database (or military address blocks and callsigns without it); helicopter
     from ADS-B category A7 or the database.
   - Private: the callsign is a registration (N123AB, CGABC…), or it's a light/small aircraft.
