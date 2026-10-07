@@ -1861,7 +1861,7 @@ class SkyAwareCard extends HTMLElement {
     const sw = (k, on) => `<input type="checkbox" class="tg" data-set="${k}" ${on ? "checked" : ""}>`;
     const nb = (k, v, min, max) => `<input type="number" data-set="${k}" value="${esc(v)}" min="${min}" max="${max}">`;
     const list = this._alertsList || [];
-    const icon = { squawk: "mdi:alert-octagon", military: "mdi:shield-airplane", heli: "mdi:helicopter", watch: "mdi:airplane-landing", test: "mdi:bell-check" };
+    const icon = { squawk: "mdi:alert-octagon", military: "mdi:shield-airplane", heli: "mdi:helicopter", overhead: "mdi:home-alert", watch: "mdi:airplane-landing", test: "mdi:bell-check" };
     box.innerHTML = `
       <div class="panel" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <ha-icon icon="mdi:cellphone-message" style="color:var(--primary-color)"></ha-icon>
@@ -1875,6 +1875,7 @@ class SkyAwareCard extends HTMLElement {
           <div class="arow">${sw("squawk", s.squawk)}<div class="grow">Emergency squawks<div class="sub">7700 emergency, 7600 radio failure, 7500 hijack, at any distance</div></div></div>
           <div class="arow">${sw("military", s.military)}<div class="grow">Military aircraft<div class="sub">from the tar1090 database and military address blocks</div></div>within ${nb("militaryRadius", s.militaryRadius, 1, 250)} nm</div>
           <div class="arow">${sw("heli", s.heli)}<div class="grow">Helicopters<div class="sub">civil ones; military helicopters count as military</div></div>within ${nb("heliRadius", s.heliRadius, 1, 100)} nm</div>
+          <div class="arow">${sw("overhead", s.overhead ?? true)}<div class="grow">Overhead<div class="sub">a military aircraft or helicopter passing close: alert again even if it already alerted, at most once per ${nb("overheadMinutes", s.overheadMinutes ?? 60, 10, 1440)} min</div></div>within ${nb("overheadRadius", s.overheadRadius ?? 3, 0.5, 20)} nm</div>
           <div class="arow"><div class="grow">Same aircraft again after<div class="sub">for military and helicopter alerts</div></div>${nb("cooldownHours", s.cooldownHours, 1, 72)} h</div>
           <div class="arow">${sw("quiet.enabled", s.quiet?.enabled)}<div class="grow">Quiet hours<div class="sub">hold back military and helicopter alerts (squawks and watched flights still come through)</div></div>
             <input type="time" data-set="quiet.start" value="${esc(s.quiet?.start)}"> to <input type="time" data-set="quiet.end" value="${esc(s.quiet?.end)}"></div>

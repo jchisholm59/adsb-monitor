@@ -103,7 +103,10 @@ const DEFAULT_SETTINGS = {
   heli: true,
   heliRadius: num('HELI_RADIUS', 10),
   watch: [], // [{callsign, added, label}] alert when landing at `airport`
-  cooldownHours: num('COOLDOWN_HOURS', 6), // per aircraft, for military/helicopter alerts
+  cooldownHours: num('COOLDOWN_HOURS', 2), // per aircraft, for military/helicopter alerts
+  overhead: true, // a military aircraft or helicopter passing right over: alert again despite the cooldown
+  overheadRadius: num('OVERHEAD_RADIUS', 3), // nm
+  overheadMinutes: 60, // at most once per this per aircraft
   quiet: { enabled: false, start: '23:00', end: '07:00' }, // holds back military/helicopter alerts only
 };
 const AIRPORTS_URL = 'https://davidmegginson.github.io/ourairports-data/airports.csv';
@@ -220,8 +223,8 @@ async function loadAirport() {
 // Accepts a partial settings object from the card; ignores unknown keys and bad values.
 async function updateSettings(p) {
   const s = settings;
-  for (const k of ['squawk', 'military', 'heli']) if (typeof p[k] === 'boolean') s[k] = p[k];
-  for (const k of ['militaryRadius', 'heliRadius', 'cooldownHours']) {
+  for (const k of ['squawk', 'military', 'heli', 'overhead']) if (typeof p[k] === 'boolean') s[k] = p[k];
+  for (const k of ['militaryRadius', 'heliRadius', 'cooldownHours', 'overheadRadius', 'overheadMinutes']) {
     const v = Number(p[k]);
     if (p[k] !== undefined && Number.isFinite(v) && v > 0 && v <= 500) s[k] = v;
   }
@@ -443,7 +446,7 @@ async function send(alert) {
   return rec;
 }
 
-async function aircraftAlert(kind, a) {
+async function aircraftAlert(kind, a, overhead = false, dd = null) {
   const cs = callsign(a);
   const [info, route, image] = await Promise.all([describe(a), routeOf(a), photoOf(a.hex)]);
   const who = [cs || info.reg || a.hex.toUpperCase(), info.type, cs && info.reg && info.reg !== cs ? info.reg : ''].filter(Boolean).join(' · ');
@@ -451,9 +454,9 @@ async function aircraftAlert(kind, a) {
   const what = kind === 'military' ? `${op ? op.code : 'Military'} ${isHeli(a) ? 'helicopter' : 'aircraft'}` : 'Helicopter';
   if (op && !info.owner) info.owner = op.name;
   return send({
-    kind, hex: a.hex, callsign: cs, priority: 'normal', image,
-    tag: `adsb-${kind}-${a.hex}`,
-    title: `${kind === 'military' ? '🎖️' : '🚁'} ${what} nearby`,
+    kind: overhead ? 'overhead' : kind, cls: kind, dist: dd === null ? null : Math.round(dd * 10) / 10, hex: a.hex, callsign: cs, priority: overhead ? 'high' : 'normal', image,
+    tag: `adsb-${overhead ? 'overhead' : kind}-${a.hex}`,
+    title: `${kind === 'military' ? '🎖️' : '🚁'} ${what} ${overhead ? 'overhead' : 'nearby'}`,
     message: `${who}${info.owner && kind === 'military' ? ` (${info.owner})` : ''}\n${where(a)}, ${fmtAlt(a.alt_baro)}${a.gs ? `, ${Math.round(a.gs)} kt` : ''}${a.track !== undefined ? ` heading ${compass(a.track)}` : ''}${route ? ` · ${route}` : ''}`,
   });
 }
@@ -488,8 +491,17 @@ async function checkAlerts(d) {
     } else squawkSeen.delete(a.hex);
 
     if (dd !== null && !quiet) {
-      if (s.military && dd <= s.militaryRadius && isMilitary(a) && !recentlyAlerted('military', a.hex, s.cooldownHours)) await aircraftAlert('military', a);
-      else if (s.heli && dd <= s.heliRadius && isHeli(a) && !isMilitary(a) && !recentlyAlerted('heli', a.hex, s.cooldownHours)) await aircraftAlert('heli', a);
+      const mil = s.military && isMilitary(a), heli = s.heli && isHeli(a) && !isMilitary(a);
+      let sent = false;
+      if (mil && dd <= s.militaryRadius && !recentlyAlerted('military', a.hex, s.cooldownHours)) sent = !!(await aircraftAlert('military', a, false, dd));
+      else if (heli && dd <= s.heliRadius && !recentlyAlerted('heli', a.hex, s.cooldownHours)) sent = !!(await aircraftAlert('heli', a, false, dd));
+      // Overhead: within a few nm of the receiver, alert again even though it alerted earlier from farther out, at most
+      // once per overheadMinutes. Skipped when its last normal alert was already sent from that close (same event).
+      if (!sent && s.overhead && (mil || heli) && dd <= s.overheadRadius && !recentlyAlerted('overhead', a.hex, s.overheadMinutes / 60)) {
+        const last = alerts.filter((x) => x.hex === a.hex && x.kind === (mil ? 'military' : 'heli')).at(-1);
+        const sameEvent = last && last.dist != null && last.dist <= s.overheadRadius && Date.now() - last.t < s.overheadMinutes * 60_000;
+        if (!sameEvent) await aircraftAlert(mil ? 'military' : 'heli', a, true, dd);
+      }
     }
   }
   await checkWatched(d);

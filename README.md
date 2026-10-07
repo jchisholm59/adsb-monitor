@@ -80,8 +80,11 @@ Two pieces that work together:
     with an estimated landing time, then "landed", which replaces it on the phone. Type a ticket-style flight
     number (AC612) or a callsign (ACA612), or tap the bell on the Flight tab. If your receiver loses the plane low
     on short final, which is common, it counts as landed 90 s later.
-  - Alerts include a photo (Planespotters) and route when available. You can set a per-aircraft cooldown and quiet
-    hours; quiet hours never hold back emergencies or watched flights.
+  - **Overhead**: a military aircraft or helicopter passing within 3 nm alerts again ("RCAF helicopter overhead"),
+    even if it already alerted when it was farther out, at most once an hour per aircraft. Not when its first alert
+    was already from that close.
+  - Alerts include a photo (Planespotters) and route when available. You can set a per-aircraft cooldown (2 h by
+    default) and quiet hours; quiet hours never hold back emergencies or watched flights.
 - **Coverage history**: the farthest position per 5° bearing and altitude band, per day (kept 60 days) and all
   time, with the flight that set each record. A position only counts if it agrees with the aircraft's previous one,
   so CPR decoding glitches and MLAT jumps don't inflate your range.
@@ -186,7 +189,8 @@ The webhook is `local_only`, so the monitor must be on the same network as HA. I
 | `HA_WEBHOOK` | none | HA webhook URL. Empty: alerts are only logged |
 | `PORT` | `7100` | API / proxy port |
 | `MILITARY_RADIUS`, `HELI_RADIUS` | `30`, `10` | Starting alert distances (nm); then set in the card |
-| `COOLDOWN_HOURS` | `6` | Starting per-aircraft cooldown; then set in the card |
+| `COOLDOWN_HOURS` | `2` | Starting per-aircraft cooldown; then set in the card |
+| `OVERHEAD_RADIUS` | `3` | Starting overhead distance (nm); then set in the card |
 
 ### Card options
 | Option | Default | |
