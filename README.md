@@ -48,7 +48,10 @@ Two pieces that work together:
   Unknown**, and chips with counts filter the list by class. The tag also shows in the map popup and on the Flight
   tab. Tap a row for its Flight page, or its 📍 pin to jump to it on the map (centred, zoomed in, selected).
   - Military comes from the monitor's database (or military address blocks and callsigns without it); helicopter
-    from ADS-B category A7 or the database.
+    from ADS-B category A7 or the database. Military aircraft are tagged with their **service and roundel** where
+    it can be told (RCAF, RAF, USAF, USN, USMC, RAAF, GAF, FAF…): from the registered owner, the callsign (HUSK/CFC →
+    RCAF, RCH → USAF, CNV → USN…), or the address block and serial format (US `92-3292` → USAF, `170018` → USN). The
+    roundel also appears next to the callsign on the map, and phone alerts name the service ("RCAF aircraft nearby").
   - Private: the callsign is a registration (N123AB, CGABC…), or it's a light/small aircraft.
   - Commercial: an airline-style callsign (ACA612), or, with no callsign yet, an airline owner or a large/heavy jet.
 - **Flight**: photo, callsign and IATA flight number, airline and logo, type, registration and owner. Origin →

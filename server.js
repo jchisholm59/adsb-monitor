@@ -46,6 +46,55 @@ const SQUAWK_EMERGENCY = { '7500': 'unlawful', '7600': 'nordo', '7700': 'general
 const MIL_RANGES = [[0xadf7c8, 0xafffff], [0xc20000, 0xc3ffff], [0x43c000, 0x43cfff], [0x3aa000, 0x3affff], [0x3b7000, 0x3bffff], [0x3ea000, 0x3ebfff], [0x3f4000, 0x3fbfff]];
 const MIL_CALLSIGN = /^(CFC|RCH|CNV|RRR|ASY|NATO|PAT|SAM|SPAR|GAF|CTM|BAF|IAM|HKY|KIWI|TUAF|VENUS|NAVY|ARMY|EVAC|REACH|TOPCT)\d/;
 
+// Military operator ("RCAF", "RAF", "USAF"…) from the registered owner, the callsign, or the address block and
+// serial format. Same logic in adsb-monitor's server.js and the card; keep them in step.
+const MIL_OWNERS = [
+  [/royal canadian air force|canadian (armed )?forces|national defen[cs]e canada|\bdnd\b/i, "RCAF", "Royal Canadian Air Force"],
+  [/royal australian air force/i, "RAAF", "Royal Australian Air Force"],
+  [/royal new zealand air force/i, "RNZAF", "Royal New Zealand Air Force"],
+  [/royal netherlands air force|koninklijke luchtmacht/i, "RNLAF", "Royal Netherlands Air Force"],
+  [/royal danish air force/i, "RDAF", "Royal Danish Air Force"],
+  [/royal norwegian air force/i, "RNoAF", "Royal Norwegian Air Force"],
+  [/royal air force|\braf\b/i, "RAF", "Royal Air Force"],
+  [/royal navy|fleet air arm/i, "RN", "Royal Navy"],
+  [/marine corps|\busmc\b/i, "USMC", "US Marine Corps"],
+  [/united states navy|\bus navy\b|\busn\b/i, "USN", "US Navy"],
+  [/united states army|\bus army\b/i, "US Army", "US Army"],
+  [/united states coast guard|\buscg\b/i, "USCG", "US Coast Guard"],
+  [/united states air force|\busaf\b|air national guard/i, "USAF", "US Air Force"],
+  [/luftwaffe|german air force|bundeswehr/i, "GAF", "German Air Force"],
+  [/arm[ée]e de l.air|french air/i, "FAF", "French Air and Space Force"],
+  [/aeronautica militare|italian air force/i, "ItAF", "Italian Air Force"],
+  [/belgian (air|defen)/i, "BAF", "Belgian Air Component"],
+  [/ej[ée]rcito del aire|spanish air/i, "SpAF", "Spanish Air and Space Force"],
+  [/turkish air force/i, "TurAF", "Turkish Air Force"],
+  [/\bnato\b/i, "NATO", "NATO"],
+];
+const MIL_PREFIXES = {
+  CFC: "RCAF", HUSK: "RCAF", CANFORCE: "RCAF", RCH: "USAF", REACH: "USAF", SAM: "USAF", SPAR: "USAF", VENUS: "USAF",
+  EVAC: "USAF", PAT: "US Army", ARMY: "US Army", CNV: "USN", NAVY: "USN", RRR: "RAF", ASY: "RAAF", KIWI: "RNZAF",
+  GAF: "GAF", CTM: "FAF", BAF: "BAF", IAM: "ItAF", TUAF: "TurAF", NATO: "NATO",
+};
+const MIL_NAMES = Object.fromEntries(MIL_OWNERS.map(([, c, n]) => [c, n]));
+function milOperator(hex, cs, owner, reg) {
+  const o = MIL_OWNERS.find(([re]) => re.test(owner || ""));
+  if (o) return { code: o[1], name: o[2] };
+  const p = /^([A-Z]+)\d/.exec(cs || "");
+  if (p && MIL_PREFIXES[p[1]]) return { code: MIL_PREFIXES[p[1]], name: MIL_NAMES[MIL_PREFIXES[p[1]]] };
+  const n = parseInt(hex, 16), r = (reg || "").trim();
+  const inR = (lo, hi) => n >= lo && n <= hi;
+  if (inR(0xc20000, 0xc3ffff)) return { code: "RCAF", name: MIL_NAMES.RCAF };
+  if (inR(0x43c000, 0x43cfff)) return { code: "RAF", name: MIL_NAMES.RAF };
+  if (inR(0x3aa000, 0x3affff) || inR(0x3b7000, 0x3bffff)) return { code: "FAF", name: MIL_NAMES.FAF };
+  if (inR(0x3ea000, 0x3ebfff) || inR(0x3f4000, 0x3fbfff)) return { code: "GAF", name: MIL_NAMES.GAF };
+  if (inR(0xadf7c8, 0xafffff)) {
+    if (/^\d{2}-\d{4,5}$/.test(r)) return { code: "USAF", name: MIL_NAMES.USAF }; // USAF serial, e.g. 92-3292
+    if (/^\d{6}$/.test(r)) return { code: "USN", name: MIL_NAMES.USN }; // Navy/Marines BuNo, e.g. 170018
+    return { code: "US Mil", name: "US military" };
+  }
+  return null;
+}
+
 // Starting values; after that the card's Alerts tab changes them (data/settings.json).
 const DEFAULT_SETTINGS = {
   squawk: true, // 7500/7600/7700 or an ADS-B emergency, any distance
@@ -398,7 +447,9 @@ async function aircraftAlert(kind, a) {
   const cs = callsign(a);
   const [info, route, image] = await Promise.all([describe(a), routeOf(a), photoOf(a.hex)]);
   const who = [cs || info.reg || a.hex.toUpperCase(), info.type, cs && info.reg && info.reg !== cs ? info.reg : ''].filter(Boolean).join(' · ');
-  const what = kind === 'military' ? (isHeli(a) ? 'Military helicopter' : 'Military aircraft') : 'Helicopter';
+  const op = kind === 'military' ? milOperator(a.hex, cs, info.owner, info.reg) : null;
+  const what = kind === 'military' ? `${op ? op.code : 'Military'} ${isHeli(a) ? 'helicopter' : 'aircraft'}` : 'Helicopter';
+  if (op && !info.owner) info.owner = op.name;
   return send({
     kind, hex: a.hex, callsign: cs, priority: 'normal', image,
     tag: `adsb-${kind}-${a.hex}`,
@@ -615,7 +666,8 @@ const server = http.createServer(async (req, res) => {
         const mil = isMilitary(a), heli = isHeli(a);
         if (!mil && !heli) continue;
         const rec = DB.mil.get(a.hex) || DB.heli.get(a.hex);
-        out[a.hex] = { mil, heli, ...(rec ? { type: rec.type, desc: rec.desc, reg: rec.reg, owner: rec.owner } : {}) };
+        const op = mil ? milOperator(a.hex, callsign(a), rec?.owner, rec?.reg) : null;
+        out[a.hex] = { mil, heli, ...(rec ? { type: rec.type, desc: rec.desc, reg: rec.reg, owner: rec.owner } : {}), ...(op ? { op: op.code, opName: op.name } : {}) };
       }
       return sendJson(res, out);
     }

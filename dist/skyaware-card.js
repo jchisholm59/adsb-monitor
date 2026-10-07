@@ -50,6 +50,81 @@ const MIL_CALLSIGN = /^(CFC|RCH|CNV|RRR|ASY|NATO|PAT|SAM|SPAR|GAF|CTM|BAF|IAM|HK
 const REG_CALLSIGN = /^(N[1-9][0-9A-Z]{0,4}|C[FGI][A-Z]{3}|G[A-Z]{4}|D[A-Z]{4}|F[A-Z]{4}|VH[A-Z]{3}|ZK[A-Z]{3}|EI[A-Z]{3})$/;
 const AIRLINE_CALLSIGN = /^[A-Z]{3}\d{1,4}[A-Z]{0,2}$/;
 const AIRLINE_OWNER = /air ?lines?|airways|airline|express|cargo|fedex|\bups\b|dhl|jazz|westjet|porter|flair|transat|lufthansa|klm|easyjet|ryanair/i;
+// Military operator ("RCAF", "RAF", "USAF"…) from the registered owner, the callsign, or the address block and
+// serial format. Same logic in adsb-monitor's server.js and the card; keep them in step.
+const MIL_OWNERS = [
+  [/royal canadian air force|canadian (armed )?forces|national defen[cs]e canada|\bdnd\b/i, "RCAF", "Royal Canadian Air Force"],
+  [/royal australian air force/i, "RAAF", "Royal Australian Air Force"],
+  [/royal new zealand air force/i, "RNZAF", "Royal New Zealand Air Force"],
+  [/royal netherlands air force|koninklijke luchtmacht/i, "RNLAF", "Royal Netherlands Air Force"],
+  [/royal danish air force/i, "RDAF", "Royal Danish Air Force"],
+  [/royal norwegian air force/i, "RNoAF", "Royal Norwegian Air Force"],
+  [/royal air force|\braf\b/i, "RAF", "Royal Air Force"],
+  [/royal navy|fleet air arm/i, "RN", "Royal Navy"],
+  [/marine corps|\busmc\b/i, "USMC", "US Marine Corps"],
+  [/united states navy|\bus navy\b|\busn\b/i, "USN", "US Navy"],
+  [/united states army|\bus army\b/i, "US Army", "US Army"],
+  [/united states coast guard|\buscg\b/i, "USCG", "US Coast Guard"],
+  [/united states air force|\busaf\b|air national guard/i, "USAF", "US Air Force"],
+  [/luftwaffe|german air force|bundeswehr/i, "GAF", "German Air Force"],
+  [/arm[ée]e de l.air|french air/i, "FAF", "French Air and Space Force"],
+  [/aeronautica militare|italian air force/i, "ItAF", "Italian Air Force"],
+  [/belgian (air|defen)/i, "BAF", "Belgian Air Component"],
+  [/ej[ée]rcito del aire|spanish air/i, "SpAF", "Spanish Air and Space Force"],
+  [/turkish air force/i, "TurAF", "Turkish Air Force"],
+  [/\bnato\b/i, "NATO", "NATO"],
+];
+const MIL_PREFIXES = {
+  CFC: "RCAF", HUSK: "RCAF", CANFORCE: "RCAF", RCH: "USAF", REACH: "USAF", SAM: "USAF", SPAR: "USAF", VENUS: "USAF",
+  EVAC: "USAF", PAT: "US Army", ARMY: "US Army", CNV: "USN", NAVY: "USN", RRR: "RAF", ASY: "RAAF", KIWI: "RNZAF",
+  GAF: "GAF", CTM: "FAF", BAF: "BAF", IAM: "ItAF", TUAF: "TurAF", NATO: "NATO",
+};
+const MIL_NAMES = Object.fromEntries(MIL_OWNERS.map(([, c, n]) => [c, n]));
+function milOperator(hex, cs, owner, reg) {
+  const o = MIL_OWNERS.find(([re]) => re.test(owner || ""));
+  if (o) return { code: o[1], name: o[2] };
+  const p = /^([A-Z]+)\d/.exec(cs || "");
+  if (p && MIL_PREFIXES[p[1]]) return { code: MIL_PREFIXES[p[1]], name: MIL_NAMES[MIL_PREFIXES[p[1]]] };
+  const n = parseInt(hex, 16), r = (reg || "").trim();
+  const inR = (lo, hi) => n >= lo && n <= hi;
+  if (inR(0xc20000, 0xc3ffff)) return { code: "RCAF", name: MIL_NAMES.RCAF };
+  if (inR(0x43c000, 0x43cfff)) return { code: "RAF", name: MIL_NAMES.RAF };
+  if (inR(0x3aa000, 0x3affff) || inR(0x3b7000, 0x3bffff)) return { code: "FAF", name: MIL_NAMES.FAF };
+  if (inR(0x3ea000, 0x3ebfff) || inR(0x3f4000, 0x3fbfff)) return { code: "GAF", name: MIL_NAMES.GAF };
+  if (inR(0xadf7c8, 0xafffff)) {
+    if (/^\d{2}-\d{4,5}$/.test(r)) return { code: "USAF", name: MIL_NAMES.USAF }; // USAF serial, e.g. 92-3292
+    if (/^\d{6}$/.test(r)) return { code: "USN", name: MIL_NAMES.USN }; // Navy/Marines BuNo, e.g. 170018
+    return { code: "US Mil", name: "US military" };
+  }
+  return null;
+}
+
+// Small national-insignia icons for the military operator tag, drawn here (no image files).
+const MAPLE = "M10 4.6L10.9 6.6L12 6.1L11.6 8.8L13.3 7.6L13.7 8.6L15.2 8.3L14.5 10.1L15.2 10.6L12.4 12.5L12.8 13.4L10.3 13L10.3 15.4L9.7 15.4L9.7 13L7.2 13.4L7.6 12.5L4.8 10.6L5.5 10.1L4.8 8.3L6.3 8.6L6.7 7.6L8.4 8.8L8 6.1L9.1 6.6Z";
+function rings(cols, extra = "") {
+  const r = cols.length === 4 ? [9.5, 7.2, 4.9, 2.6] : cols.length === 3 ? [9.5, 6.4, 3.2] : [9.5, 4.8];
+  return `<svg viewBox="0 0 20 20" width="14" height="14">${cols.map((c, i) => `<circle cx="10" cy="10" r="${r[i]}" fill="${c}"${i ? "" : ` stroke="rgba(0,0,0,.35)" stroke-width=".6"`}/>`).join("")}${extra}</svg>`;
+}
+const US_STAR = `<svg viewBox="0 0 34 20" width="24" height="14"><rect x="1" y="6" width="32" height="8" fill="#fff" stroke="rgba(0,0,0,.35)" stroke-width=".6"/><rect x="1" y="8.6" width="32" height="2.8" fill="#b22234"/><circle cx="17" cy="10" r="9.3" fill="#3c3b6e" stroke="rgba(0,0,0,.35)" stroke-width=".6"/><path d="M17 1.6L19 7.6L25.2 7.6L20.2 11.3L22.1 17.3L17 13.6L11.9 17.3L13.8 11.3L8.8 7.6L15 7.6Z" fill="#fff"/></svg>`;
+const ROUNDELS = {
+  RCAF: rings(["#1d3f8f", "#fff"], `<path d="${MAPLE}" fill="#d52b1e"/>`),
+  RAF: rings(["#00247d", "#fff", "#cf142b"]),
+  RN: rings(["#00247d", "#fff", "#cf142b"]),
+  RAAF: rings(["#00247d", "#fff", "#cf142b"]),
+  RNZAF: rings(["#00247d", "#fff", "#cf142b"]),
+  FAF: rings(["#ef4135", "#fff", "#0055a4"]),
+  ItAF: rings(["#ce2b37", "#fff", "#009246"]),
+  BAF: rings(["#e30613", "#fdda24", "#111"]),
+  RNLAF: rings(["#ae1c28", "#fff", "#21468b", "#ff8200"]),
+  RDAF: rings(["#c8102e", "#fff", "#c8102e"]),
+  RNoAF: rings(["#ba0c2f", "#fff", "#00205b"]),
+  SpAF: rings(["#c60b1e", "#ffc400", "#c60b1e"]),
+  TurAF: rings(["#e30a17", "#fff", "#e30a17"]),
+  GAF: `<svg viewBox="0 0 20 20" width="14" height="14"><path d="M7 1h6v6h6v6h-6v6H7v-6H1V7h6z" fill="#fff" stroke="rgba(0,0,0,.35)" stroke-width=".6"/><path d="M8.5 2.5h3v6h6v3h-6v6h-3v-6h-6v-3h6z" fill="#111"/></svg>`,
+  NATO: `<svg viewBox="0 0 20 20" width="14" height="14"><circle cx="10" cy="10" r="9.5" fill="#004990"/><path d="M10 2L11.6 8.4L18 10L11.6 11.6L10 18L8.4 11.6L2 10L8.4 8.4Z" fill="#fff"/></svg>`,
+};
+for (const k of ["USAF", "USN", "USMC", "US Army", "USCG", "US Mil"]) ROUNDELS[k] = US_STAR;
+
 const MODES = { autopilot: "AP", vnav: "VNAV", lnav: "LNAV", tcas: "TCAS", althold: "ALT", approach: "APP" };
 
 // Plane silhouettes, nose up, centred on 0,0.
@@ -596,8 +671,16 @@ class SkyAwareCard extends HTMLElement {
     return CLASS.unk;
   }
 
-  _tag(c, short) {
+  // Class tag; for military aircraft the operator's roundel and code (RCAF, RAF, USAF…) when it can be told.
+  _tag(c, short, a) {
+    const op = c.k === "mil" && a ? this._milOp(a) : null;
+    if (op) return `<span class="ctag" style="--c:${c.c}" title="Military · ${esc(op.name)}">${ROUNDELS[op.code] || `<ha-icon icon="${c.i}"></ha-icon>`}${esc(op.code)}</span>`;
     return `<span class="ctag" style="--c:${c.c}" title="${c.l}"><ha-icon icon="${c.i}"></ha-icon>${short ? "" : c.l}</span>`;
+  }
+
+  _milOp(a) {
+    const m = this._classes?.[a.hex], info = this._info(a.hex);
+    return milOperator(a.hex, callsign(a), m?.owner || info?.owner, info?.reg || m?.reg);
   }
 
   // Emergency squawk: {code, name, ok}. ok (confirmed) = the matching ADS-B emergency status, or the code held for
@@ -748,6 +831,7 @@ class SkyAwareCard extends HTMLElement {
         .ctag { display: inline-flex; align-items: center; gap: 4px; font-size: .74em; font-weight: 600; padding: 2px 8px 2px 6px; border-radius: 999px;
                 color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); white-space: nowrap; vertical-align: middle; }
         .ctag ha-icon { --mdc-icon-size: 14px; }
+        .ctag svg { flex: none; display: block; }
         .ctag:empty, .ctag.icon { padding: 2px 5px; }
         .cfilter { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
         .cfilter button { border: 1px solid var(--divider-color); background: transparent; color: var(--primary-text-color); font: inherit; font-size: .8em;
@@ -1359,7 +1443,14 @@ class SkyAwareCard extends HTMLElement {
       g += `<path d="${SHAPES[shape]}" transform="rotate(${rot.toFixed(0)}) scale(${(sc * (isSel ? 1.25 : 1)).toFixed(2)})" fill="${altColor(a.alt_baro, isSel)}" stroke="${mlat ? "#4040ff" : this._dark ? "#000" : "#222"}"/>`;
       if (this._labels || isSel) {
         const cs = callsign(a) || a.hex.toUpperCase();
-        g += `<text class="lbl" x="${13 * sc + 2}" y="-1">${esc(cs)}</text>`;
+        // Military operator's roundel in front of the callsign.
+        const op = this._class(a).k === "mil" ? this._milOp(a) : null, rd = op && ROUNDELS[op.code];
+        let lx = 13 * sc + 2;
+        if (rd) {
+          g += rd.replace("<svg ", `<svg x="${lx}" y="-12" `);
+          lx += op.code.startsWith("US") ? 26 : 16;
+        }
+        g += `<text class="lbl" x="${lx}" y="-1">${esc(cs)}</text>`;
         if (isSel || this._labels) {
           const alt = a.alt_baro === "ground" ? "GND" : typeof a.alt_baro === "number" ? (a.alt_baro >= 18000 ? `FL${Math.round(a.alt_baro / 100)}` : `${num(a.alt_baro)}`) : "";
           g += `<text class="lbl2" x="${13 * sc + 2}" y="11">${alt}${a.gs ? ` · ${Math.round(a.gs)} kt` : ""}</text>`;
@@ -1435,7 +1526,7 @@ class SkyAwareCard extends HTMLElement {
     const rt = this._route(a), info = this._info(a.hex);
     const vr = vrate(a);
     pop.innerHTML = `
-      <div class="cs"><span class="sw" style="background:${altColor(a.alt_baro)}"></span>${esc(cs || a.hex.toUpperCase())}${this._tag(this._class(a), true)}
+      <div class="cs"><span class="sw" style="background:${altColor(a.alt_baro)}"></span>${esc(cs || a.hex.toUpperCase())}${this._tag(this._class(a), true, a)}
         ${info?.icao ? `<span class="tag">${esc(info.icao)}</span>` : ""}${info?.reg ? `<span class="tag">${esc(info.reg)}</span>` : ""}
         <ha-icon class="x" icon="mdi:close" data-act="close"></ha-icon></div>
       <div class="rt">${rt ? `<b>${esc(rt.o.iata || rt.o.icao)}</b> ${esc(rt.o.location)} → <b>${esc(rt.d.iata || rt.d.icao)}</b> ${esc(rt.d.location)}` : `<span class="muted">${cs ? "Route unknown" : "No callsign"}</span>`}</div>
@@ -1519,7 +1610,7 @@ class SkyAwareCard extends HTMLElement {
       return `<tr data-hex="${esc(a.hex)}" class="${cls}">
         <td class="pin">${a.lat !== undefined ? `<button data-act="locate" data-hex="${esc(a.hex)}" title="Show on the map"><ha-icon icon="mdi:map-marker-radius"></ha-icon></button>` : ""}</td>
         <td><span class="sw" style="background:${altColor(a.alt_baro)}"></span><b>${esc(callsign(a) || "")}</b>${callsign(a) ? "" : `<span class="muted">${esc(a.hex.toUpperCase())}</span>`}${(a.mlat || []).includes("lat") ? `<span class="tag">MLAT</span>` : ""}</td>
-        <td>${this._tag(this._class(a))}</td>
+        <td>${this._tag(this._class(a), false, a)}</td>
         <td>${rt ? `${esc(rt.o.iata || rt.o.icao)} → ${esc(rt.d.iata || rt.d.icao)}` : `<span class="muted">–</span>`}</td>
         <td>${esc(info?.icao || this._classes?.[a.hex]?.type || "")}</td>
         <td>${esc(info?.reg || this._classes?.[a.hex]?.reg || "")}</td>
@@ -1575,9 +1666,9 @@ class SkyAwareCard extends HTMLElement {
       <div class="photo-wrap">${photo?.src ? `<a href="${esc(photo.link)}" target="_blank" rel="noreferrer"><img class="photo" src="${esc(photo.src)}" alt=""></a><div class="cr">© ${esc(photo.by)}</div>`
         : `<div class="photo" style="display:flex;align-items:center;justify-content:center;color:var(--secondary-text-color)"><ha-icon icon="mdi:airplane" style="--mdc-icon-size:48px;opacity:.4"></ha-icon></div>`}</div>
       <div class="fid">
-        <div class="cs">${esc(cs || a.hex.toUpperCase())}${iataFlight && iataFlight !== cs ? `<span class="pill dim">${esc(iataFlight)}</span>` : ""}${this._tag(this._class(a))}
+        <div class="cs">${esc(cs || a.hex.toUpperCase())}${iataFlight && iataFlight !== cs ? `<span class="pill dim">${esc(iataFlight)}</span>` : ""}${this._tag(this._class(a), false, a)}
           ${phase ? `<span class="pill ok">${phase}</span>` : ""}${!live ? `<span class="pill warn">Signal lost</span>` : ""}${sqName ? `<span class="pill bad">${sqName} · ${a.squawk}</span>` : emg ? `<span class="pill warn" title="Not confirmed yet: often a corrupted Mode S reply">${esc(emg.code)} unconfirmed</span>` : ""}</div>
-        <div class="al">${logo ? `<img src="https://www.flightaware.com/images/airline_logos/90p/${esc(logo)}.png" alt="" onerror="this.remove()">` : ""}${esc(airlineName || info?.owner || (cs ? "" : "No callsign"))}</div>
+        <div class="al">${logo ? `<img src="https://www.flightaware.com/images/airline_logos/90p/${esc(logo)}.png" alt="" onerror="this.remove()">` : ""}${esc(airlineName || info?.owner || (this._class(a).k === "mil" && this._milOp(a)?.name) || (cs ? "" : "No callsign"))}</div>
         <div class="ty">${[info?.mfr && info?.type ? `${info.mfr} ${info.type}` : info?.type, info?.icao && `(${info.icao})`].filter(Boolean).map(esc).join(" ")}
           ${info?.reg ? ` · <b>${esc(info.reg)}</b>` : ""}${info?.owner && airlineName && info.owner !== airlineName ? ` · ${esc(info.owner)}` : ""}</div>
         <div class="ty">ICAO ${esc(a.hex.toUpperCase())}${a.category ? ` · ${esc(CATEGORY[a.category] || a.category)}` : ""}${info?.country ? ` · ${esc(info.country)}` : ""}${(a.mlat || []).includes("lat") ? " · position by MLAT" : a.version !== undefined ? ` · ADS-B v${a.version}` : ""}</div>
