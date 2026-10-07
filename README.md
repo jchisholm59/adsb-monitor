@@ -38,10 +38,10 @@ Two pieces that work together:
 - **Map**: aircraft drawn as jet / light aircraft / helicopter silhouettes, rotated to their track and coloured
   by altitude like SkyAware (MLAT positions outlined in blue). Range rings, callsign and altitude/speed labels, and
   trails pre-filled from SkyAware's history. Drag, wheel, pinch and double-click to zoom; follow a selected aircraft;
-  draw its route as a great circle to its airports; overlay your 30-day coverage outline. A **filter** button shows
+  draw its route as a great circle to its airports; overlay your 30-day coverage outline; switch between the plain map and **satellite** imagery. A **filter** button shows
   only chosen classes (e.g. just military and helicopters) and/or chosen airlines among the flights in view
   (Air Canada, WestJet, United…, with logos and counts); a pill at the top says how many are shown and clears it. Dark or light basemap
-  follows your HA theme (Esri gray canvas, no API key needed).
+  follows your HA theme (Esri gray canvas, or Esri satellite imagery; no API key needed).
 - **Aircraft**: summary tiles (count, msg/s, nearest, farthest, highest, fastest) and a table sortable by any
   column: flight, class, route, type, registration, squawk, altitude, vertical rate, speed, track, distance, RSSI,
   messages, last seen. Each aircraft gets a class tag, **Commercial, Military, Helicopter, Private, Unclassified or
@@ -215,7 +215,7 @@ All free, keyless and CORS-enabled. Lookups are cached.
 - Military flags and helicopter types: [tar1090-db](https://github.com/wiedehopf/tar1090-db) and SkyAware's own
   ICAO type table.
 - Airports: [OurAirports](https://ourairports.com/data/) (public domain).
-- Basemap: Esri World Gray Canvas (Esri, HERE, Garmin, © OpenStreetMap contributors).
+- Basemap: Esri World Gray Canvas and World Imagery (Esri, Maxar, Earthstar Geographics, HERE, Garmin, © OpenStreetMap contributors).
 - Airline logos: FlightAware's public logo images.
 
 **Privacy:** your receiver's position never leaves your network. The card and monitor send only aircraft

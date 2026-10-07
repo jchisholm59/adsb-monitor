@@ -275,6 +275,7 @@ class SkyAwareCard extends HTMLElement {
     };
     this._tab = get("tab", "map");
     this._labels = get("labels", "1") === "1";
+    this._sat = get("sat", "0") === "1"; // satellite basemap
     this._trailsAll = get("trails", "1") === "1";
     this._sort = get("sort", "dist");
     this._sortDir = Number(get("sortdir", "1"));
@@ -934,6 +935,7 @@ class SkyAwareCard extends HTMLElement {
               <button id="zout" title="Zoom out"><ha-icon icon="mdi:minus"></ha-icon></button>
               <button id="home" title="Back to the receiver"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button>
               <button id="lbl" title="Labels"><ha-icon icon="mdi:label-outline"></ha-icon></button>
+              <button id="sat" title="Satellite"><ha-icon icon="mdi:satellite-variant"></ha-icon></button>
               <button id="trl" title="Trails for all aircraft"><ha-icon icon="mdi:chart-timeline-variant"></ha-icon></button>
               <button id="cvm" title="Receiver coverage (last 30 days)"><ha-icon icon="mdi:radar"></ha-icon></button>
               <button id="flt" title="Filter: classes and airlines"><ha-icon icon="mdi:filter-variant"></ha-icon><span class="badge" id="fbadge"></span></button>
@@ -944,7 +946,7 @@ class SkyAwareCard extends HTMLElement {
             <div class="legend">Altitude (ft)
               <div class="bar" style="background: linear-gradient(90deg, ${[0, 2000, 6000, 10000, 20000, 30000, 40000].map((a, i, arr) => `${altColor(a)} ${((i / (arr.length - 1)) * 100).toFixed(0)}%`).join(", ")})"></div>
               <div class="ticks"><span>0</span><span>2k</span><span>6k</span><span>10k</span><span>20k</span><span>30k</span><span>40k+</span></div></div>
-            <div class="attr">Esri, HERE, Garmin, © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a></div>
+            <div class="attr">Esri, Maxar, Earthstar Geographics, HERE, Garmin, © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a></div>
           </div>
         </div>
 
@@ -978,6 +980,11 @@ class SkyAwareCard extends HTMLElement {
     this.$("lbl").addEventListener("click", () => {
       this._labels = !this._labels;
       this._save("labels", this._labels ? 1 : 0);
+      this._renderMap();
+    });
+    this.$("sat").addEventListener("click", () => {
+      this._sat = !this._sat;
+      this._save("sat", this._sat ? 1 : 0);
       this._renderMap();
     });
     this.$("trl").addEventListener("click", () => {
@@ -1299,7 +1306,7 @@ class SkyAwareCard extends HTMLElement {
     this._select(best);
   }
 
-  // Esri's gray canvas basemap (free, no key) plus its labels layer; tiles from the nearest whole zoom, scaled.
+  // Esri's gray canvas basemap, or World Imagery when satellite is on (free, no key), plus labels; tiles from the nearest whole zoom, scaled.
   _renderTiles(v, w, h) {
     const box = this.$("tiles");
     if (!this._tiles) this._tiles = new Map();
@@ -1309,11 +1316,14 @@ class SkyAwareCard extends HTMLElement {
     const y0 = Math.max(0, Math.floor((v.y * S - h / 2) / T)), y1 = Math.min(n - 1, Math.floor((v.y * S + h / 2) / T));
     const shade = this._dark ? "Dark" : "Light";
     const keep = new Set();
+    const src = (layer) => this._sat
+      ? (layer === "Base" ? "World_Imagery" : "Reference/World_Boundaries_and_Places")
+      : `Canvas/World_${shade}_Gray_${layer}`;
     for (const layer of ["Base", "Reference"]) {
       for (let tx = x0; tx <= x1; tx++) {
         for (let ty = y0; ty <= y1; ty++) {
           const wx = ((tx % n) + n) % n;
-          const key = `${layer}/${tz}/${tx}/${ty}`;
+          const key = `${this._sat ? "s" : shade}/${layer}/${tz}/${tx}/${ty}`;
           keep.add(key);
           let img = this._tiles.get(key);
           if (!img) {
@@ -1321,7 +1331,7 @@ class SkyAwareCard extends HTMLElement {
             img.alt = "";
             img.decoding = "async";
             img.style.zIndex = layer === "Base" ? 0 : 1;
-            img.src = `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_${shade}_Gray_${layer}/MapServer/tile/${tz}/${ty}/${wx}`;
+            img.src = `https://server.arcgisonline.com/ArcGIS/rest/services/${src(layer)}/MapServer/tile/${tz}/${ty}/${wx}`;
             this._tiles.set(key, img);
             box.appendChild(img);
           }
@@ -1346,13 +1356,15 @@ class SkyAwareCard extends HTMLElement {
     const v = this._view || this._defaultView();
     if (!v) return;
     const map = this.$("map");
-    map.style.setProperty("--sa-ring", this._dark ? "rgba(140,170,255,.55)" : "rgba(40,70,160,.5)");
-    map.style.setProperty("--sa-ring-t", this._dark ? "#b4c6ff" : "#28469f");
-    map.style.setProperty("--sa-halo", this._dark ? "rgba(0,0,0,.85)" : "rgba(255,255,255,.9)");
-    map.style.setProperty("--sa-text", this._dark ? "#f2f2f2" : "#1d1d1d");
-    map.style.setProperty("--sa-text2", this._dark ? "#c9c9c9" : "#444");
+    const dk = this._dark || this._sat;
+    map.style.setProperty("--sa-ring", dk ? "rgba(140,170,255,.55)" : "rgba(40,70,160,.5)");
+    map.style.setProperty("--sa-ring-t", dk ? "#b4c6ff" : "#28469f");
+    map.style.setProperty("--sa-halo", dk ? "rgba(0,0,0,.85)" : "rgba(255,255,255,.9)");
+    map.style.setProperty("--sa-text", dk ? "#f2f2f2" : "#1d1d1d");
+    map.style.setProperty("--sa-text2", dk ? "#c9c9c9" : "#444");
     this._renderTiles(v, w, h);
     this.$("lbl").classList.toggle("on", this._labels);
+    this.$("sat").classList.toggle("on", this._sat);
     this.$("trl").classList.toggle("on", this._trailsAll);
     const P = (lat, lon) => this._pt(lat, lon, v, w, h);
     const inView = ([x, y], m = 40) => x > -m && y > -m && x < w + m && y < h + m;
@@ -1440,7 +1452,7 @@ class SkyAwareCard extends HTMLElement {
         g += `<circle r="18" fill="none" stroke="var(--primary-color)" stroke-width="3"><animate attributeName="r" values="14;46" dur="1.1s" repeatCount="indefinite"/><animate attributeName="opacity" values="1;0" dur="1.1s" repeatCount="indefinite"/></circle>`;
       const emg = this._emerg(a);
       if (emg) g += `<circle r="${19 * sc}" fill="none" stroke="var(${emg.ok ? "--sa-bad" : "--sa-warn"})" stroke-width="2.5"${emg.ok ? "" : ` stroke-dasharray="4 3"`}/>`;
-      g += `<path d="${SHAPES[shape]}" transform="rotate(${rot.toFixed(0)}) scale(${(sc * (isSel ? 1.25 : 1)).toFixed(2)})" fill="${altColor(a.alt_baro, isSel)}" stroke="${mlat ? "#4040ff" : this._dark ? "#000" : "#222"}"/>`;
+      g += `<path d="${SHAPES[shape]}" transform="rotate(${rot.toFixed(0)}) scale(${(sc * (isSel ? 1.25 : 1)).toFixed(2)})" fill="${altColor(a.alt_baro, isSel)}" stroke="${mlat ? "#4040ff" : this._dark || this._sat ? "#000" : "#222"}"/>`;
       if (this._labels || isSel) {
         const cs = callsign(a) || a.hex.toUpperCase();
         // Military operator's roundel in front of the callsign.
