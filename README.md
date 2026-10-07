@@ -96,10 +96,15 @@ Without pm2: `node server.js`. Data lives in `data/`. That's settings, coverage 
 downloaded aircraft database (~8 MB, refreshed weekly) and your airport.
 
 ### 2. The card
-1. Copy `card/skyaware-card.js` to `/config/www/` on Home Assistant.
+**With HACS:** HACS → ⋮ → Custom repositories → add `https://github.com/jchisholm59/adsb-monitor`, type
+*Dashboard*, then download **SkyAware Card**. HACS adds the resource for you.
+
+**By hand:**
+1. Copy `dist/skyaware-card.js` to `/config/www/` on Home Assistant.
 2. Settings → Dashboards → ⋮ → Resources → Add: `/local/skyaware-card.js`, type *JavaScript module*.
    (After updating the file, change it to `/local/skyaware-card.js?v=2`, `?v=3`… so browsers reload it.)
-3. Add a view (a *Panel* view gives the map the whole screen) with:
+
+**Then** add a view (a *Panel* view gives the map the whole screen) with:
    ```yaml
    type: custom:skyaware-card
    urls:                              # your PiAware; first that answers is used

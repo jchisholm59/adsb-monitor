@@ -1,0 +1,6 @@
+{
+  "name": "SkyAware Card (PiAware / ADS-B)",
+  "filename": "skyaware-card.js",
+  "render_readme": true,
+  "homeassistant": "2024.1.0"
+}

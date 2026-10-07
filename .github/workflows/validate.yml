@@ -1,0 +1,26 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 0 * * 0"
+  workflow_dispatch:
+
+jobs:
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: plugin
+  node:
+    name: Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --check server.js && node --check dist/skyaware-card.js
