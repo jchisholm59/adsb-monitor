@@ -18,7 +18,22 @@ const DEFAULTS = {
   refresh: 2, // seconds between aircraft.json polls
   trail_minutes: 30,
   lookups: true, // routes / aircraft details / photos from the internet
+  markers: true, // landmarks on the map: true (built-in), false, or a list of {name, lat, lon, sub, note} to add
 };
+
+// Built-in landmarks, drawn on the map; tap one for its note.
+const LANDMARKS = [
+  {
+    name: "Swissair 111",
+    lat: 44.4092,
+    lon: -63.9736,
+    sub: "Crash site · 2 September 1998",
+    note: "The MD-11 (HB-IWF), New York JFK to Geneva, reported smoke in the cockpit off Nova Scotia and diverted to Halifax. " +
+      "A fire spreading above the cockpit ceiling, started by arcing wiring and fed by flammable insulation, disabled the aircraft " +
+      "while it turned to dump fuel; it struck the sea off Peggy's Cove at 10:31 p.m. and all 229 aboard were lost. " +
+      "Memorials stand at Whalesback near Peggy's Cove and at Bayswater.",
+  },
+];
 
 const NM = 3440.065; // earth radius, nm
 const RAD = Math.PI / 180;
@@ -791,6 +806,7 @@ class SkyAwareCard extends HTMLElement {
         .pop .cs { font-size: 1.15em; font-weight: 600; display: flex; align-items: center; gap: 8px; }
         .pop .x { margin-left: auto; cursor: pointer; color: var(--secondary-text-color); --mdc-icon-size: 18px; }
         .pop .rt { font-size: .85em; margin: 2px 0 6px; }
+        .pop .lmnote { font-size: .85em; line-height: 1.4; margin: 0 0 8px; }
         .pop .kv { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 8px; font-size: .78em; }
         .pop .kv b { display: block; font-size: 1.15em; font-variant-numeric: tabular-nums; }
         .pop .kv span { color: var(--secondary-text-color); }
@@ -1115,7 +1131,13 @@ class SkyAwareCard extends HTMLElement {
     this._renderAll();
   }
 
+  _landmarks() {
+    const m = this._config.markers;
+    return m === false ? [] : [...LANDMARKS, ...(Array.isArray(m) ? m.filter((x) => isFinite(x?.lat) && isFinite(x?.lon)) : [])];
+  }
+
   _select(hex) {
+    this._lm = null;
     this._sel = hex;
     this._selLast = hex ? this._byHex?.get(hex) || null : null;
     if (this._selLast) this._selSeenAt = (this._now || 0) - (this._selLast.seen || 0);
@@ -1309,7 +1331,11 @@ class SkyAwareCard extends HTMLElement {
       if (d < bd) (bd = d), (best = hex);
     }
     this._follow = false;
-    this._select(best);
+    if (typeof best === "string" && best.startsWith("lm:")) {
+      this._select(null);
+      this._lm = Number(best.slice(3));
+      this._renderMap();
+    } else this._select(best);
   }
 
   // Esri's gray canvas basemap, or World Imagery when satellite is on (free, no key), plus labels; tiles from the nearest whole zoom, scaled.
@@ -1440,8 +1466,20 @@ class SkyAwareCard extends HTMLElement {
       }
       g += `<g stroke-width="${isSel ? 3 : 1.8}" stroke-linecap="round" opacity="${isSel ? 0.95 : 0.55}">${out}</g>`;
     }
-    // Aircraft, selected last so it's on top.
+    // Landmarks, under the aircraft.
     this._hits = [];
+    this._landmarks().forEach((m, i) => {
+      const p = P(m.lat, m.lon);
+      if (!inView(p)) return;
+      this._hits.push(["lm:" + i, p[0], p[1]]);
+      const on = this._lm === i;
+      g += `<g transform="translate(${p[0].toFixed(1)},${p[1].toFixed(1)})">`;
+      if (on) g += `<circle r="13" fill="none" stroke="var(--primary-color)" stroke-width="2.5"/>`;
+      g += `<path d="M0,-7L7,0L0,7L-7,0Z" fill="#8e1b1b" stroke="#fff" stroke-width="1.5"/><circle r="1.8" fill="#fff"/>`;
+      if (this._labels || on) g += `<text class="lbl" x="11" y="-1">${esc(m.name)}</text><text class="lbl2" x="11" y="11">${esc(m.year || (m.sub || "").replace(/^.*?(\d{4}).*$/, "$1"))}</text>`;
+      g += `</g>`;
+    });
+    // Aircraft, selected last so it's on top.
     const order = [...acs].sort((a, b) => (a.hex === this._sel) - (b.hex === this._sel) || (typeof a.alt_baro === "number" ? a.alt_baro : 0) - (typeof b.alt_baro === "number" ? b.alt_baro : 0));
     for (const a of order) {
       const p = P(a.lat, a.lon);
@@ -1538,7 +1576,22 @@ class SkyAwareCard extends HTMLElement {
   _renderPop() {
     const pop = this.$("pop");
     const a = this._sel && (this._byHex?.get(this._sel) || this._selLast);
-    pop.classList.toggle("on", !!a);
+    const m = !a && this._lm != null ? this._landmarks()[this._lm] : null;
+    pop.classList.toggle("on", !!(a || m));
+    if (m) {
+      const rx = this._rx, d = rx && dist(rx.lat, rx.lon, m.lat, m.lon), b = rx && bearing(rx.lat, rx.lon, m.lat, m.lon);
+      const html = `
+        <div class="cs"><ha-icon icon="mdi:map-marker-star" style="color:#c62828"></ha-icon>${esc(m.name)}<ha-icon class="x" icon="mdi:close" data-act="close"></ha-icon></div>
+        <div class="rt muted">${esc(m.sub || "")}</div>
+        ${m.note ? `<div class="lmnote">${esc(m.note)}</div>` : ""}
+        <div class="kv">
+          <div><span>Position</span><b>${Math.abs(m.lat).toFixed(4)}°${m.lat < 0 ? "S" : "N"}<br>${Math.abs(m.lon).toFixed(4)}°${m.lon < 0 ? "W" : "E"}</b></div>
+          ${d != null ? `<div><span>From the receiver</span><b>${num(d, d < 10 ? 1 : 0)} nm ${compass(b)}</b></div>` : ""}
+        </div>`;
+      if (html !== this._lmHtml) pop.innerHTML = this._lmHtml = html;
+      return;
+    }
+    this._lmHtml = null;
     if (!a) return;
     const cs = callsign(a);
     const rt = this._route(a), info = this._info(a.hex);

@@ -200,6 +200,7 @@ The webhook is `local_only`, so the monitor must be on the same network as HA. I
 | `title` | `Planes` | |
 | `path` | `/skyaware/` | SkyAware path on PiAware |
 | `rings` | `[50, 100, 150, 200]` | Range rings, nm |
+| `markers` | `true` | Landmarks on the map (built in: the **Swissair 111** crash site off Peggy's Cove; tap for its story). `false` hides them; a list adds your own: `- {name: ..., lat: ..., lon: ..., sub: ..., note: ...}` |
 | `refresh` | `2` | Seconds between polls |
 | `trail_minutes` | `30` | |
 | `map_height` | fills the screen | px |
