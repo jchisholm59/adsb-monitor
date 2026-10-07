@@ -803,7 +803,8 @@ class SkyAwareCard extends HTMLElement {
                         font-size: 10px; font-weight: 700; display: none; align-items: center; justify-content: center; padding: 0 3px; }
         .ctrls .badge.on { display: flex; }
         .pop { position: absolute; left: 10px; top: 10px; width: min(300px, calc(100% - 70px)); background: var(--card-background-color, #fff);
-               border-radius: 12px; box-shadow: var(--ha-card-box-shadow, 0 2px 10px rgba(0,0,0,.25)); padding: 10px 12px; display: none; cursor: default; }
+               border-radius: 12px; box-shadow: var(--ha-card-box-shadow, 0 2px 10px rgba(0,0,0,.25)); padding: 10px 12px; display: none; cursor: default;
+               max-height: calc(100% - 20px); overflow: auto; box-sizing: border-box; }
         .pop.on { display: block; }
         .pop .cs { font-size: 1.15em; font-weight: 600; display: flex; align-items: center; gap: 8px; }
         .pop .x { margin-left: auto; cursor: pointer; color: var(--secondary-text-color); --mdc-icon-size: 18px; }
