@@ -34,7 +34,9 @@ Two pieces that work together:
 - **Map**: aircraft drawn as jet / light aircraft / helicopter silhouettes, rotated to their track and coloured
   by altitude like SkyAware (MLAT positions outlined in blue). Range rings, callsign and altitude/speed labels, and
   trails pre-filled from SkyAware's history. Drag, wheel, pinch and double-click to zoom; follow a selected aircraft;
-  draw its route as a great circle to its airports; overlay your 30-day coverage outline. Dark or light basemap
+  draw its route as a great circle to its airports; overlay your 30-day coverage outline. A **filter** button shows
+  only chosen classes (e.g. just military and helicopters) and/or chosen airlines among the flights in view
+  (Air Canada, WestJet, United…, with logos and counts); a pill at the top says how many are shown and clears it. Dark or light basemap
   follows your HA theme (Esri gray canvas, no API key needed).
 - **Aircraft**: summary tiles (count, msg/s, nearest, farthest, highest, fastest) and a table sortable by any
   column: flight, class, route, type, registration, squawk, altitude, vertical rate, speed, track, distance, RSSI,

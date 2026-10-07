@@ -131,6 +131,7 @@ const STORE = {
   photos: new Map(), // hex -> {src, link, by} | null
   aircraft: null, // hex -> adsbdb aircraft | null (also in localStorage)
   historyLoaded: false,
+  carriers: null, // airline ICAO code -> {name, iata} | null (also in localStorage)
 };
 function acCache() {
   if (!STORE.aircraft) {
@@ -142,6 +143,23 @@ function acCache() {
   }
   return STORE.aircraft;
 }
+function carriers() {
+  if (!STORE.carriers) {
+    STORE.carriers = new Map();
+    try {
+      for (const [k, v] of Object.entries(JSON.parse(localStorage.getItem("skyaware-card:carriers") || "{}"))) STORE.carriers.set(k, v);
+    } catch (e) {}
+  }
+  return STORE.carriers;
+}
+function saveCarriers() {
+  try {
+    localStorage.setItem("skyaware-card:carriers", JSON.stringify(Object.fromEntries(carriers())));
+  } catch (e) {}
+}
+// Airline ICAO code of a commercial flight's callsign ("ACA612" -> "ACA"), or "".
+const carrierOf = (a) => (AIRLINE_CALLSIGN.test(callsign(a)) ? callsign(a).slice(0, 3) : "");
+
 function saveAcCache() {
   try {
     const entries = [...acCache().entries()].slice(-3000);
@@ -186,6 +204,9 @@ class SkyAwareCard extends HTMLElement {
     this._sortDir = Number(get("sortdir", "1"));
     this._covRange = get("covrange", "7");
     this._clsFilter = get("class", "all");
+    // Map filter: classes and airlines to show (empty = no restriction).
+    this._fCls = new Set(get("mapcls", "").split(",").filter(Boolean));
+    this._fAir = new Set(get("mapair", "").split(",").filter(Boolean));
     this._covOn = get("covmap", "0") === "1";
     this._acs = [];
     this._view = null; // map centre {x, y} (mercator units) and zoom z
@@ -486,6 +507,7 @@ class SkyAwareCard extends HTMLElement {
     const ac = order.find((a) => !cache.has(a.hex) && !a.hex.startsWith("~"));
     const sel = this._sel && this._byHex?.get(this._sel);
     const cs = sel && callsign(sel);
+    let code = null;
     this._busy = true;
     try {
       if (cs && !STORE.airlines.has(cs)) {
@@ -494,6 +516,12 @@ class SkyAwareCard extends HTMLElement {
         this._renderFlight();
       } else if (sel && !STORE.photos.has(sel.hex)) {
         await this._lookupPhoto(sel.hex);
+      } else if ((code = this._acs.map(carrierOf).find((c) => c && !carriers().has(c)))) {
+        const d = await getJSON(`https://api.adsbdb.com/v0/airline/${code}`);
+        const x = Array.isArray(d?.response) ? d.response[0] : null;
+        carriers().set(code, x ? { name: x.name, iata: x.iata || "" } : null);
+        saveCarriers();
+        if (this._fOpen) this._renderFilter();
       } else if (ac) {
         const d = await getJSON(`https://api.adsbdb.com/v0/aircraft/${ac.hex}`);
         const a = d?.response?.aircraft;
@@ -504,6 +532,7 @@ class SkyAwareCard extends HTMLElement {
       }
     } catch (e) {
       if (cs && !STORE.airlines.has(cs)) STORE.airlines.set(cs, null);
+      else if (code) carriers().set(code, null);
       else if (ac && !cache.has(ac.hex)) cache.set(ac.hex, null);
     }
     this._busy = false;
@@ -628,6 +657,31 @@ class SkyAwareCard extends HTMLElement {
         .attr { position: absolute; right: 6px; bottom: 4px; font-size: 9px; color: var(--secondary-text-color);
                 background: color-mix(in srgb, var(--card-background-color, #fff) 70%, transparent); padding: 1px 4px; border-radius: 4px; }
         .attr a { color: inherit; }
+        .fpanel { position: absolute; top: 10px; right: 56px; width: min(330px, calc(100% - 76px)); max-height: calc(100% - 20px); overflow: auto;
+                  background: var(--card-background-color, #fff); border-radius: 12px; box-shadow: var(--ha-card-box-shadow, 0 2px 10px rgba(0,0,0,.25));
+                  padding: 10px 12px; display: none; cursor: default; z-index: 2; }
+        .fpanel.on { display: block; }
+        .fpanel h5 { margin: 10px 0 6px; font-size: .72em; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--secondary-text-color); }
+        .fpanel .fh { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+        .fpanel .fh a { margin-left: auto; font-weight: 400; font-size: .85em; cursor: pointer; }
+        .fchips { display: flex; flex-wrap: wrap; gap: 6px; }
+        .fchips button { border: 1px solid var(--divider-color); background: transparent; color: var(--primary-text-color); font: inherit; font-size: .8em;
+                         padding: 3px 9px 3px 6px; border-radius: 999px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; max-width: 100%; }
+        .fchips button ha-icon { --mdc-icon-size: 15px; color: var(--c); }
+        .fchips button img { width: 18px; height: 18px; object-fit: contain; border-radius: 3px; background: #fff; }
+        .fchips button .n { color: var(--secondary-text-color); font-variant-numeric: tabular-nums; }
+        .fchips button .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .fchips button.on { border-color: var(--c, var(--primary-color)); background: color-mix(in srgb, var(--c, var(--primary-color)) 20%, transparent); }
+        .fchips button.dim { opacity: .45; }
+        .fnote { font-size: .75em; color: var(--secondary-text-color); margin-top: 8px; }
+        .fpill { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: var(--primary-color); color: var(--text-primary-color, #fff);
+                 font-size: .8em; padding: 4px 6px 4px 12px; border-radius: 999px; display: none; align-items: center; gap: 6px; z-index: 1; white-space: nowrap; }
+        .fpill.on { display: inline-flex; }
+        .fpill ha-icon { --mdc-icon-size: 16px; cursor: pointer; }
+        .ctrls button { position: relative; }
+        .ctrls .badge { position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; border-radius: 8px; background: var(--sa-warn); color: #000;
+                        font-size: 10px; font-weight: 700; display: none; align-items: center; justify-content: center; padding: 0 3px; }
+        .ctrls .badge.on { display: flex; }
         .pop { position: absolute; left: 10px; top: 10px; width: min(300px, calc(100% - 70px)); background: var(--card-background-color, #fff);
                border-radius: 12px; box-shadow: var(--ha-card-box-shadow, 0 2px 10px rgba(0,0,0,.25)); padding: 10px 12px; display: none; cursor: default; }
         .pop.on { display: block; }
@@ -775,8 +829,11 @@ class SkyAwareCard extends HTMLElement {
               <button id="lbl" title="Labels"><ha-icon icon="mdi:label-outline"></ha-icon></button>
               <button id="trl" title="Trails for all aircraft"><ha-icon icon="mdi:chart-timeline-variant"></ha-icon></button>
               <button id="cvm" title="Receiver coverage (last 30 days)"><ha-icon icon="mdi:radar"></ha-icon></button>
+              <button id="flt" title="Filter: classes and airlines"><ha-icon icon="mdi:filter-variant"></ha-icon><span class="badge" id="fbadge"></span></button>
             </div>
             <div class="pop" id="pop"></div>
+            <div class="fpanel" id="fpanel"></div>
+            <div class="fpill" id="fpill"></div>
             <div class="legend">Altitude (ft)
               <div class="bar" style="background: linear-gradient(90deg, ${[0, 2000, 6000, 10000, 20000, 30000, 40000].map((a, i, arr) => `${altColor(a)} ${((i / (arr.length - 1)) * 100).toFixed(0)}%`).join(", ")})"></div>
               <div class="ticks"><span>0</span><span>2k</span><span>6k</span><span>10k</span><span>20k</span><span>30k</span><span>40k+</span></div></div>
@@ -821,6 +878,27 @@ class SkyAwareCard extends HTMLElement {
       this._save("trails", this._trailsAll ? 1 : 0);
       this._renderMap();
     });
+    this.$("flt").addEventListener("click", () => {
+      this._fOpen = !this._fOpen;
+      this._renderFilter();
+    });
+    const fclick = (e) => {
+      const b = e.target.closest("[data-f]");
+      if (!b) return;
+      const [kind, v] = [b.dataset.f, b.dataset.v];
+      if (kind === "reset") this._fCls.clear(), this._fAir.clear();
+      else if (kind === "close") this._fOpen = false;
+      else if (kind === "open") this._fOpen = true;
+      else {
+        const set = kind === "cls" ? this._fCls : this._fAir;
+        set.has(v) ? set.delete(v) : set.add(v);
+      }
+      this._save("mapcls", [...this._fCls].join(","));
+      this._save("mapair", [...this._fAir].join(","));
+      this._renderMap();
+    };
+    this.$("fpanel").addEventListener("click", fclick);
+    this.$("fpill").addEventListener("click", fclick);
     this.$("cvm").addEventListener("click", () => {
       this._covOn = !this._covOn;
       this._save("covmap", this._covOn ? 1 : 0);
@@ -1015,7 +1093,7 @@ class SkyAwareCard extends HTMLElement {
     const pts = new Map();
     let moved = 0, pinch = null;
     el.addEventListener("pointerdown", (e) => {
-      if (e.target.closest(".ctrls, .pop, .attr")) return;
+      if (e.target.closest(".ctrls, .pop, .attr, .fpanel, .fpill")) return;
       el.setPointerCapture(e.pointerId);
       pts.set(e.pointerId, [e.clientX, e.clientY]);
       moved = 0;
@@ -1063,14 +1141,14 @@ class SkyAwareCard extends HTMLElement {
     el.addEventListener("pointerup", up);
     el.addEventListener("pointercancel", up);
     el.addEventListener("wheel", (e) => {
-      if (e.target.closest(".pop")) return;
+      if (e.target.closest(".pop, .fpanel")) return;
       e.preventDefault();
       const r = el.getBoundingClientRect();
       const px = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
       this._zoomBy(Math.max(-0.5, Math.min(0.5, -px / 250)), e.clientX - r.left, e.clientY - r.top);
     }, { passive: false });
     el.addEventListener("dblclick", (e) => {
-      if (e.target.closest(".ctrls, .pop")) return;
+      if (e.target.closest(".ctrls, .pop, .fpanel, .fpill")) return;
       const r = el.getBoundingClientRect();
       this._zoomBy(1, e.clientX - r.left, e.clientY - r.top);
     });
@@ -1168,7 +1246,7 @@ class SkyAwareCard extends HTMLElement {
       const [hx, hy] = P(rx.lat, rx.lon);
       g += `<g transform="translate(${hx},${hy})"><circle r="6" fill="var(--primary-color)" stroke="var(--sa-halo)" stroke-width="2.5"/><circle r="2" fill="var(--sa-halo)"/></g>`;
     }
-    const acs = (this._acs || []).filter((a) => a.lat !== undefined && a.seen_pos < 60);
+    const acs = (this._acs || []).filter((a) => a.lat !== undefined && a.seen_pos < 60 && (a.hex === this._sel || this._shown(a)));
     // Selected flight's route.
     const sel = this._sel && this._byHex?.get(this._sel);
     if (sel?.lat !== undefined) {
@@ -1245,6 +1323,61 @@ class SkyAwareCard extends HTMLElement {
     }
     this.$("ov").innerHTML = g;
     this._renderPop();
+    this._renderFilter();
+  }
+
+  // Map filter. Picking airlines shows just those airlines' flights (plus any classes also picked);
+  // picking only classes shows those classes. Nothing picked: everything.
+  _filtering() {
+    return this._fCls.size > 0 || this._fAir.size > 0;
+  }
+
+  _shown(a) {
+    if (!this._filtering()) return true;
+    const c = this._class(a).k;
+    if (c === "com" && this._fAir.size) return this._fAir.has(carrierOf(a));
+    return this._fCls.has(c);
+  }
+
+  _renderFilter() {
+    if (!this._built || this._tab !== "map") return;
+    const acs = (this._acs || []).filter((a) => a.lat !== undefined && a.seen_pos < 60);
+    const shown = acs.filter((a) => this._shown(a)).length, on = this._filtering();
+    const badge = this.$("fbadge");
+    badge.classList.toggle("on", on);
+    badge.textContent = on ? this._fCls.size + this._fAir.size : "";
+    this.$("flt").classList.toggle("on", !!this._fOpen);
+    const pill = this.$("fpill");
+    pill.classList.toggle("on", on && !this._fOpen);
+    if (on) pill.innerHTML = `<ha-icon icon="mdi:filter-variant" data-f="open"></ha-icon>Showing ${shown} of ${acs.length}<ha-icon icon="mdi:close-circle" data-f="reset" title="Clear filter"></ha-icon>`;
+    const panel = this.$("fpanel");
+    panel.classList.toggle("on", !!this._fOpen);
+    if (!this._fOpen) return;
+    const cc = {}, ac = {};
+    for (const a of acs) {
+      const c = this._class(a).k;
+      cc[c] = (cc[c] || 0) + 1;
+      const code = c === "com" && carrierOf(a);
+      if (code) ac[code] = (ac[code] || 0) + 1;
+    }
+    const name = (code) => carriers().get(code)?.name || code;
+    const airlines = Object.keys(ac).sort((x, y) => ac[y] - ac[x] || name(x).localeCompare(name(y)));
+    const html = `
+      <div class="fh"><ha-icon icon="mdi:filter-variant" style="--mdc-icon-size:18px"></ha-icon>Show on the map
+        ${on ? `<a data-f="reset">Show all</a>` : ""}<ha-icon icon="mdi:close" data-f="close" style="--mdc-icon-size:18px;cursor:pointer;color:var(--secondary-text-color)${on ? "" : ";margin-left:auto"}"></ha-icon></div>
+      <h5>Class</h5>
+      <div class="fchips">${CLASSES.filter(([c]) => cc[c] || this._fCls.has(c)).map(([c, l, i, col]) =>
+        `<button data-f="cls" data-v="${c}" class="${this._fCls.has(c) ? "on" : ""}" style="--c:${col}"><ha-icon icon="${i}"></ha-icon>${l} <span class="n">${cc[c] || 0}</span></button>`).join("")}</div>
+      <h5>Airlines in view</h5>
+      <div class="fchips">${[...new Set([...airlines, ...this._fAir])].map((code) =>
+        `<button data-f="air" data-v="${esc(code)}" class="${this._fAir.has(code) ? "on" : ""}" style="--c:${CLASS.com.c}" title="${esc(code)}${carriers().get(code)?.iata ? " / " + esc(carriers().get(code).iata) : ""}">
+          <img src="https://www.flightaware.com/images/airline_logos/90p/${esc(code)}.png" alt="" onerror="this.remove()"><span class="nm">${esc(name(code))}</span> <span class="n">${ac[code] || 0}</span></button>`).join("") || `<span class="muted" style="font-size:.85em">No airline flights in view</span>`}</div>
+      <div class="fnote">${on ? `Showing ${shown} of ${acs.length} aircraft. ` : ""}Pick classes, airlines or both. The selected aircraft always stays visible. Remembered in this browser.</div>`;
+    if (html !== this._fHtml) {
+      const top = panel.scrollTop;
+      panel.innerHTML = this._fHtml = html;
+      panel.scrollTop = top;
+    }
   }
 
   _renderPop() {
