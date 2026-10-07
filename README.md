@@ -11,8 +11,12 @@ Two pieces that work together:
   coverage, sends alerts to your phone through Home Assistant, and proxies SkyAware with CORS so the card also works
   away from home over a VPN.
 
-The card works on its own with just your PiAware. The monitor adds the Coverage and Alerts tabs, the PiAware status
-lights and remote access.
+> [!IMPORTANT]
+> **The card alone** (installable from HACS) gives you the Map, Aircraft, Flight and SkyAware tabs, straight from
+> your PiAware. **Coverage history, phone alerts, the PiAware status lights and access away from home** need
+> **adsb-monitor**, a small background service you run yourself. It needs Node.js 22+ on any always-on Linux machine
+> on your network (the PiAware Pi itself works), kept running with pm2 or systemd. HACS can't install it for you;
+> see [Install → 1. The monitor](#1-the-monitor).
 
 | Coverage | Aircraft | Alerts |
 |---|---|---|
@@ -75,8 +79,9 @@ flowchart LR
 - A PiAware feeder, or any **dump1090-fa** with **SkyAware** (it serves `data/aircraft.json` with
   `Access-Control-Allow-Origin: *`). Tested with PiAware / SkyAware 11.1.
 - **Home Assistant**, for the card and for notifications (the companion app on your phone).
-- For the monitor: **Node.js 22+** on any always-on Linux box (the PiAware Pi itself works). pm2 is optional but
-  handy.
+- For the monitor: **Node.js 22+** on any always-on Linux box (the PiAware Pi itself works), kept running by pm2
+  or systemd. Raspberry Pi OS's own `nodejs` package is often older; install 22 from
+  [NodeSource](https://github.com/nodesource/distributions) or with nvm. It uses ~150 MB of RAM and little CPU.
 - HA served over plain `http` on your LAN. If your HA is `https`, the card can't call `http` addresses (mixed
   content), so put the monitor behind https too.
 
@@ -92,7 +97,23 @@ npm i -g pm2                      # if you don't have it
 pm2 start ecosystem.config.js && pm2 save
 curl http://localhost:7100/api/status
 ```
-Without pm2: `node server.js`. Data lives in `data/`. That's settings, coverage and the alert log, plus the
+It must keep running (it's what records coverage and sends alerts), so use pm2 as above, or a systemd service:
+```ini
+# /etc/systemd/system/adsb-monitor.service
+[Unit]
+Description=adsb-monitor
+After=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/adsb-monitor
+ExecStart=/usr/bin/node server.js
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+`sudo systemctl enable --now adsb-monitor`. Data lives in `data/`. That's settings, coverage and the alert log, plus the
 downloaded aircraft database (~8 MB, refreshed weekly) and your airport.
 
 ### 2. The card
