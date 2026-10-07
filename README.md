@@ -20,9 +20,13 @@ Two pieces that work together:
 
 ![Map tab: live aircraft with range rings, altitude-coloured trails and a selected flight](docs/map.png)
 
-| Map filter | Flight status | Light theme |
-|---|---|---|
-| ![Map filter: chosen classes and airlines only, with counts and logos](docs/map-filter.png) | ![Flight tab: route, progress, estimated arrival and live data](docs/flight.png) | ![Map tab in Home Assistant's light theme](docs/map-light.png) |
+| Map filter | Jump to aircraft (from the list's 📍) |
+|---|---|
+| ![Map filter: chosen classes and airlines only, with counts and logos](docs/map-filter.png) | ![The map centred and zoomed on an aircraft picked from the Aircraft list](docs/locate.png) |
+
+| Flight status | Light theme |
+|---|---|
+| ![Flight tab: route, progress, estimated arrival and live data](docs/flight.png) | ![Map tab in Home Assistant's light theme](docs/map-light.png) |
 
 | Coverage | Aircraft | Alerts |
 |---|---|---|
@@ -56,12 +60,15 @@ Two pieces that work together:
   today / 7 days / 30 days / all time, with records and per-day charts.
 - **Alerts**: everything below, as switches, plus a test button and the alert log.
 - **SkyAware**: your original SkyAware page, embedded.
-- Emergency squawks (7500 / 7600 / 7700) show as a red pill in the header and a red ring on the map.
+- Emergency squawks (7500 / 7600 / 7700) show as a red pill in the header and a red ring on the map once confirmed;
+  amber with a "?" until then.
 
 ### The monitor
 - **Phone alerts** (as sticky notifications through Home Assistant):
-  - **Emergency squawks**: 7700, 7600 or 7500, or an ADS-B emergency status, at any distance. It must be seen on two
-    polls in a row, since a single garbled squawk is common.
+  - **Emergency squawks**: 7700, 7600 or 7500, or an ADS-B emergency status, at any distance. A squawk must be
+    confirmed: either by the matching ADS-B emergency status, or by holding for 60 s while 20+ more messages arrive.
+    A single corrupted Mode S reply often decodes as 7500, and dump1090 keeps showing it until a clean one replaces
+    it. The card shows unconfirmed ones in amber with a "?" instead of red.
   - **Military aircraft nearby**: uses the military flag in
     [wiedehopf/tar1090-db](https://github.com/wiedehopf/tar1090-db) (downloaded weekly), plus known military ICAO
     address blocks and callsign prefixes.

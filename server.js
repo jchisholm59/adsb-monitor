@@ -40,6 +40,8 @@ const RAD = Math.PI / 180;
 const BUCKETS = 72; // 5° each
 const BANDS = [['low', -1e9, 10000], ['mid', 10000, 25000], ['high', 25000, 1e9]];
 const SQUAWKS = { '7500': 'Hijack', '7600': 'Radio failure', '7700': 'Emergency' };
+// ADS-B emergency status that goes with each squawk (dump1090-fa's `emergency` field).
+const SQUAWK_EMERGENCY = { '7500': 'unlawful', '7600': 'nordo', '7700': 'general' };
 // Military ICAO address blocks (as in readsb) and callsign prefixes, on top of the database's military flag.
 const MIL_RANGES = [[0xadf7c8, 0xafffff], [0xc20000, 0xc3ffff], [0x43c000, 0x43cfff], [0x3aa000, 0x3affff], [0x3b7000, 0x3bffff], [0x3ea000, 0x3ebfff], [0x3f4000, 0x3fbfff]];
 const MIL_CALLSIGN = /^(CFC|RCH|CNV|RRR|ASY|NATO|PAT|SAM|SPAR|GAF|CTM|BAF|IAM|HKY|KIWI|TUAF|VENUS|NAVY|ARMY|EVAC|REACH|TOPCT)\d/;
@@ -327,7 +329,7 @@ function saveCoverage() {
 
 let alerts = readJson(ALERTS_FILE, []); // newest last, last 200
 const watchState = new Map(); // callsign -> {approach, last:{t, alt, d}}
-const squawkSeen = new Map(); // hex -> {code, n}
+const squawkSeen = new Map(); // hex -> {code, t, msgs} when the code was first seen
 
 function recentlyAlerted(kind, hex, hours) {
   const since = Date.now() - hours * 3600_000;
@@ -412,13 +414,16 @@ async function checkAlerts(d) {
     const pos = a.lat !== undefined && a.seen_pos < 30 && rx;
     const dd = pos ? dist(rx.lat, rx.lon, a.lat, a.lon) : null;
 
-    // Emergency squawks: seen on two polls in a row (a garbled squawk is usually one-off).
+    // Emergency squawks. dump1090 keeps the last squawk it decoded, so a single corrupted Mode S reply can sit there
+    // as "7500" for minutes. Confirmed means: the matching ADS-B emergency status, or the same code held for 60 s
+    // while 20+ more messages arrived (a real squawk keeps being repeated; a glitch gets overwritten).
     const code = SQUAWKS[a.squawk] ? a.squawk : a.emergency && a.emergency !== 'none' ? a.emergency : null;
     if (code) {
-      const q = squawkSeen.get(a.hex);
-      const n = q && q.code === code ? q.n + 1 : 1;
-      squawkSeen.set(a.hex, { code, n });
-      if (s.squawk && n === 2 && !recentlyAlerted('squawk', a.hex, 2)) {
+      let q = squawkSeen.get(a.hex);
+      if (!q || q.code !== code) squawkSeen.set(a.hex, (q = { code, t: Date.now(), msgs: a.messages || 0 }));
+      const adsb = a.emergency && a.emergency !== 'none' && (!SQUAWKS[code] || a.emergency === SQUAWK_EMERGENCY[code]);
+      const held = Date.now() - q.t >= 60_000 && (a.messages || 0) - q.msgs >= 20 && a.seen < 10;
+      if (s.squawk && (adsb || held) && !recentlyAlerted('squawk', a.hex, 2)) {
         const cs = callsign(a);
         const [info, route, image] = await Promise.all([describe(a), routeOf(a), photoOf(a.hex)]);
         const what = SQUAWKS[a.squawk] ? `Squawk ${a.squawk} · ${SQUAWKS[a.squawk]}` : `Emergency: ${code}`;

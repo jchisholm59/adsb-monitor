@@ -28,6 +28,7 @@ const TABS = [["map", "Map", "mdi:map"], ["list", "Aircraft", "mdi:format-list-b
 const BANDS = [["high", "Above 25,000 ft", 35000], ["mid", "10,000–25,000 ft", 15000], ["low", "Below 10,000 ft", 1500]];
 const RANGES = [["1", "Today"], ["7", "7 days"], ["30", "30 days"], ["all", "All time"]];
 const SQUAWKS = { "7500": "Hijack", "7600": "Radio failure", "7700": "Emergency" };
+const SQUAWK_EMERGENCY = { "7500": "unlawful", "7600": "nordo", "7700": "general" }; // matching ADS-B emergency status
 const CATEGORY = {
   A1: "Light (< 7 t)", A2: "Small (7–34 t)", A3: "Large (34–136 t)", A4: "High vortex (B757)", A5: "Heavy (> 136 t)",
   A6: "High performance", A7: "Rotorcraft", B1: "Glider", B2: "Balloon", B4: "Ultralight", B6: "Drone",
@@ -461,6 +462,14 @@ class SkyAwareCard extends HTMLElement {
       while (tr.length && tr[0].t < cutoff) tr.shift();
       if (!tr.length) STORE.trails.delete(hex);
     }
+    // Emergency squawks seen, for _emerg(): when each code was first seen and the message count then.
+    if (!this._sq) this._sq = new Map();
+    for (const ac of d.aircraft) {
+      const code = SQUAWKS[ac.squawk] ? ac.squawk : ac.emergency && ac.emergency !== "none" ? ac.emergency : null;
+      const q = this._sq.get(ac.hex);
+      if (!code) this._sq.delete(ac.hex);
+      else if (!q || q.code !== code) this._sq.set(ac.hex, { code, t: Date.now(), msgs: ac.messages || 0 });
+    }
     this._acs = d.aircraft;
     if (!this._kicked && this._config.lookups) {
       this._kicked = true;
@@ -589,6 +598,16 @@ class SkyAwareCard extends HTMLElement {
 
   _tag(c, short) {
     return `<span class="ctag" style="--c:${c.c}" title="${c.l}"><ha-icon icon="${c.i}"></ha-icon>${short ? "" : c.l}</span>`;
+  }
+
+  // Emergency squawk: {code, name, ok}. ok (confirmed) = the matching ADS-B emergency status, or the code held for
+  // 60 s while 20+ more messages arrived. A single corrupted Mode S reply often decodes as 7500 and dump1090 keeps it.
+  _emerg(a) {
+    const q = this._sq?.get(a.hex);
+    if (!q) return null;
+    const adsb = a.emergency && a.emergency !== "none" && (!SQUAWKS[q.code] || a.emergency === SQUAWK_EMERGENCY[q.code]);
+    const held = Date.now() - q.t >= 60000 && (a.messages || 0) - q.msgs >= 20 && a.seen < 10;
+    return { code: q.code, name: SQUAWKS[q.code] || q.code, ok: !!(adsb || held) };
   }
 
   _info(hex) {
@@ -1033,10 +1052,14 @@ class SkyAwareCard extends HTMLElement {
       st.textContent = `${acs.length} aircraft`;
       st.title = `${withPos} with positions`;
     }
-    const em = acs.filter((a) => SQUAWKS[a.squawk] || (a.emergency && a.emergency !== "none"));
+    const em = acs.map((a) => [a, this._emerg(a)]).filter(([, x]) => x);
     const e = this.$("emerg");
     e.hidden = !em.length;
-    if (em.length) e.textContent = em.map((a) => `${callsign(a) || a.hex} ${SQUAWKS[a.squawk] || a.emergency}`).join(" · ");
+    if (em.length) {
+      e.className = `pill ${em.some(([, x]) => x.ok) ? "bad" : "warn"}`;
+      e.textContent = em.map(([a, x]) => (x.ok ? `${callsign(a) || a.hex} ${x.name}` : `${callsign(a) || a.hex} ${x.code}?`)).join(" · ");
+      e.title = em.some(([, x]) => !x.ok) ? "? = not confirmed yet: no matching ADS-B emergency status, and not held for a minute (often a corrupted Mode S reply)" : "";
+    }
     const s = this._monStatus?.piaware;
     const dots = s && !this._monErr
       ? `<span class="dots">${[["piaware", "PiAware"], ["adept", "FlightAware"], ["mlat", "MLAT"], ["radio", "Radio"]]
@@ -1331,7 +1354,8 @@ class SkyAwareCard extends HTMLElement {
       if (isSel) g += `<circle class="selring" r="${17 * sc}"/>`;
       if (this._flash?.hex === a.hex && Date.now() < this._flash.until)
         g += `<circle r="18" fill="none" stroke="var(--primary-color)" stroke-width="3"><animate attributeName="r" values="14;46" dur="1.1s" repeatCount="indefinite"/><animate attributeName="opacity" values="1;0" dur="1.1s" repeatCount="indefinite"/></circle>`;
-      if (SQUAWKS[a.squawk]) g += `<circle r="${19 * sc}" fill="none" stroke="var(--sa-bad)" stroke-width="2.5"/>`;
+      const emg = this._emerg(a);
+      if (emg) g += `<circle r="${19 * sc}" fill="none" stroke="var(${emg.ok ? "--sa-bad" : "--sa-warn"})" stroke-width="2.5"${emg.ok ? "" : ` stroke-dasharray="4 3"`}/>`;
       g += `<path d="${SHAPES[shape]}" transform="rotate(${rot.toFixed(0)}) scale(${(sc * (isSel ? 1.25 : 1)).toFixed(2)})" fill="${altColor(a.alt_baro, isSel)}" stroke="${mlat ? "#4040ff" : this._dark ? "#000" : "#222"}"/>`;
       if (this._labels || isSel) {
         const cs = callsign(a) || a.hex.toUpperCase();
@@ -1421,7 +1445,7 @@ class SkyAwareCard extends HTMLElement {
         <div><span>V/S</span><b>${vr ? `${vr > 0 ? "▲" : "▼"} ${num(Math.abs(vr))}` : "level"}</b></div>
         <div><span>Distance</span><b>${num(a._dist, 1)} nm</b></div>
         <div><span>Bearing</span><b>${a._brg !== undefined ? `${num(a._brg)}° ${compass(a._brg)}` : "–"}</b></div>
-        <div><span>Squawk</span><b class="${SQUAWKS[a.squawk] ? "bad" : ""}">${esc(a.squawk || "–")}</b></div>
+        <div><span>Squawk</span><b class="${this._emerg(a) ? (this._emerg(a).ok ? "bad" : "warn") : ""}">${esc(a.squawk || "–")}${this._emerg(a) && !this._emerg(a).ok ? "?" : ""}</b></div>
       </div>
       <div class="acts"><button class="btn pri" data-act="details"><ha-icon icon="mdi:information-outline"></ha-icon>Flight details</button>
         <button class="btn ${this._follow ? "on" : ""}" data-act="follow"><ha-icon icon="mdi:crosshairs"></ha-icon>${this._follow ? "Following" : "Follow"}</button>
@@ -1490,7 +1514,7 @@ class SkyAwareCard extends HTMLElement {
     this.$("lbody").innerHTML = rows.map((a) => {
       const info = this._info(a.hex), rt = this._route(a);
       const vr = vrate(a);
-      const em = SQUAWKS[a.squawk];
+      const emg = this._emerg(a), em = emg?.ok ? emg.name : "";
       const cls = [a.hex === this._sel ? "sel" : "", a.seen > 30 ? "stale" : "", em ? "emerg" : ""].join(" ");
       return `<tr data-hex="${esc(a.hex)}" class="${cls}">
         <td class="pin">${a.lat !== undefined ? `<button data-act="locate" data-hex="${esc(a.hex)}" title="Show on the map"><ha-icon icon="mdi:map-marker-radius"></ha-icon></button>` : ""}</td>
@@ -1499,7 +1523,7 @@ class SkyAwareCard extends HTMLElement {
         <td>${rt ? `${esc(rt.o.iata || rt.o.icao)} → ${esc(rt.d.iata || rt.d.icao)}` : `<span class="muted">–</span>`}</td>
         <td>${esc(info?.icao || this._classes?.[a.hex]?.type || "")}</td>
         <td>${esc(info?.reg || this._classes?.[a.hex]?.reg || "")}</td>
-        <td class="${em ? "bad" : ""}">${esc(a.squawk || "")}${em ? ` ${em}` : ""}</td>
+        <td class="${em ? "bad" : emg ? "warn" : ""}">${esc(a.squawk || "")}${em ? ` ${em}` : emg ? "?" : ""}</td>
         <td class="r">${a.alt_baro === "ground" ? "GND" : num(a.alt_baro)}</td>
         <td class="r">${vr ? `<span class="${vr > 0 ? "good" : "warn"}">${vr > 0 ? "▲" : "▼"}</span> ${num(Math.abs(vr))}` : ""}</td>
         <td class="r">${a.gs ? num(a.gs) : ""}</td>
@@ -1531,7 +1555,7 @@ class SkyAwareCard extends HTMLElement {
     const photo = STORE.photos.get(a.hex);
     const vr = vrate(a);
     const lostFor = live ? 0 : Math.max(0, (this._now || 0) - (this._selSeenAt || 0));
-    const sqName = SQUAWKS[a.squawk];
+    const emg = this._emerg(a), sqName = emg?.ok ? emg.name : "";
 
     // Phase of flight.
     let phase = "";
@@ -1552,7 +1576,7 @@ class SkyAwareCard extends HTMLElement {
         : `<div class="photo" style="display:flex;align-items:center;justify-content:center;color:var(--secondary-text-color)"><ha-icon icon="mdi:airplane" style="--mdc-icon-size:48px;opacity:.4"></ha-icon></div>`}</div>
       <div class="fid">
         <div class="cs">${esc(cs || a.hex.toUpperCase())}${iataFlight && iataFlight !== cs ? `<span class="pill dim">${esc(iataFlight)}</span>` : ""}${this._tag(this._class(a))}
-          ${phase ? `<span class="pill ok">${phase}</span>` : ""}${!live ? `<span class="pill warn">Signal lost</span>` : ""}${sqName ? `<span class="pill bad">${sqName} · ${a.squawk}</span>` : ""}</div>
+          ${phase ? `<span class="pill ok">${phase}</span>` : ""}${!live ? `<span class="pill warn">Signal lost</span>` : ""}${sqName ? `<span class="pill bad">${sqName} · ${a.squawk}</span>` : emg ? `<span class="pill warn" title="Not confirmed yet: often a corrupted Mode S reply">${esc(emg.code)} unconfirmed</span>` : ""}</div>
         <div class="al">${logo ? `<img src="https://www.flightaware.com/images/airline_logos/90p/${esc(logo)}.png" alt="" onerror="this.remove()">` : ""}${esc(airlineName || info?.owner || (cs ? "" : "No callsign"))}</div>
         <div class="ty">${[info?.mfr && info?.type ? `${info.mfr} ${info.type}` : info?.type, info?.icao && `(${info.icao})`].filter(Boolean).map(esc).join(" ")}
           ${info?.reg ? ` · <b>${esc(info.reg)}</b>` : ""}${info?.owner && airlineName && info.owner !== airlineName ? ` · ${esc(info.owner)}` : ""}</div>
