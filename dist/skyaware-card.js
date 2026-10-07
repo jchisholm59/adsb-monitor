@@ -31,6 +31,8 @@ const LANDMARKS = [
     note: "The MD-11 (HB-IWF), New York JFK to Geneva, reported smoke in the cockpit off Nova Scotia and diverted to Halifax. " +
       "A fire spreading above the cockpit ceiling, started by arcing wiring and fed by flammable insulation, disabled the aircraft " +
       "while it turned to dump fuel; it struck the sea off Peggy's Cove at 10:31 p.m. and all 229 aboard were lost. " +
+      "Through that night and the weeks that followed, local fishermen, volunteer firefighters, the RCMP, the Coast Guard, " +
+      "the Canadian Forces and the people of the shore communities searched the water, recovered those lost and cared for their families. " +
       "Memorials stand at Whalesback near Peggy's Cove and at Bayswater.",
   },
 ];
