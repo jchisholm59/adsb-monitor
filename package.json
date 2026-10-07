@@ -1,0 +1,11 @@
+{
+  "name": "adsb-monitor",
+  "version": "1.0.0",
+  "description": "Watches a PiAware receiver: coverage history, phone alerts via Home Assistant, CORS proxy for the HA SkyAware card",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT"
+}

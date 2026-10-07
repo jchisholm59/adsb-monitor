@@ -1,0 +1,32 @@
+# Home Assistant automation: turns adsb-monitor's alerts into sticky phone notifications.
+# 1. Settings -> Automations -> Create -> Edit in YAML, paste this.
+# 2. Replace YOUR_WEBHOOK_ID with a long random string and notify.mobile_app_YOUR_PHONE with your phone's
+#    notify service (Developer tools -> Actions, search "mobile_app").
+# 3. In adsb-monitor's .env: HA_WEBHOOK=http://<your-ha>:8123/api/webhook/YOUR_WEBHOOK_ID
+# The data block is for the Android companion app (sticky, channels, tap to open the dashboard); iOS ignores what it
+# doesn't support. Change clickAction to your dashboard's path.
+alias: ADS-B alerts
+description: >-
+  Sticky phone alerts from adsb-monitor: emergency squawks, military aircraft and helicopters nearby, watched
+  flights landing at the home airport. What to alert on is set in the SkyAware card's Alerts tab.
+mode: queued
+max: 20
+triggers:
+  - trigger: webhook
+    webhook_id: YOUR_WEBHOOK_ID
+    allowed_methods: [POST]
+    local_only: true
+conditions: []
+actions:
+  - variables:
+      payload: >-
+        {% set j = trigger.json %}{% set icons = {'squawk': 'mdi:alert-octagon', 'military': 'mdi:shield-airplane',
+        'heli': 'mdi:helicopter', 'watch': 'mdi:airplane-landing'} %}{% set d = {'tag': j.tag, 'sticky': 'true',
+        'channel': 'Aircraft emergencies' if j.kind == 'squawk' else 'Aircraft alerts', 'importance': 'high',
+        'priority': 'high', 'ttl': 0, 'clickAction': '/lovelace/planes', 'notification_icon': icons.get(j.kind,
+        'mdi:airplane')} %}{% if j.image %}{% set d = dict(d, image=j.image) %}{% endif %}{{ d }}
+  - action: notify.mobile_app_YOUR_PHONE
+    data:
+      title: "{{ trigger.json.title }}"
+      message: "{{ trigger.json.message }}"
+      data: "{{ payload }}"
