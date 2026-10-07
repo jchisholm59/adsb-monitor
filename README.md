@@ -37,8 +37,14 @@ Two pieces that work together:
   draw its route as a great circle to its airports; overlay your 30-day coverage outline. Dark or light basemap
   follows your HA theme (Esri gray canvas, no API key needed).
 - **Aircraft**: summary tiles (count, msg/s, nearest, farthest, highest, fastest) and a table sortable by any
-  column: flight, route, type, registration, squawk, altitude, vertical rate, speed, track, distance, RSSI, messages,
-  last seen.
+  column: flight, class, route, type, registration, squawk, altitude, vertical rate, speed, track, distance, RSSI,
+  messages, last seen. Each aircraft gets a class tag, **Commercial, Military, Helicopter, Private, Unclassified or
+  Unknown**, and chips with counts filter the list by class. The tag also shows in the map popup and on the Flight
+  tab.
+  - Military comes from the monitor's database (or military address blocks and callsigns without it); helicopter
+    from ADS-B category A7 or the database.
+  - Private: the callsign is a registration (N123AB, CGABC…), or it's a light/small aircraft.
+  - Commercial: an airline-style callsign (ACA612), or, with no callsign yet, an airline owner or a large/heavy jet.
 - **Flight**: photo, callsign and IATA flight number, airline and logo, type, registration and owner. Origin →
   destination with a progress bar, distance flown and to go, **estimated arrival time**, and flight phase (climbing,
   cruising, descending, on approach). Live altitude, vertical rate, speed, track, distance and bearing from you,
@@ -206,6 +212,7 @@ identifiers (hex, callsign) and, for route checks, aircraft positions to the ser
   | `GET / PUT /api/settings` | alert settings (partial updates) |
   | `POST /api/watch` | `{"callsign": "ACA612"}` to watch, add `"remove": true` to stop |
   | `GET /api/alerts` | last 100 alerts |
+  | `GET /api/classes` | military / helicopter flags (and type, registration) for the aircraft in view |
   | `POST /api/test-alert` | send a test notification |
 - Anyone who can reach the monitor's port can change its alert settings. Keep it on your LAN or VPN.
 

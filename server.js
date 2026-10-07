@@ -493,6 +493,7 @@ async function landedAlert(w, st, hex, tag) {
 // ---- polling ---------------------------------------------------------------
 
 let last = null; // {now, messages}
+let current = []; // the latest aircraft.json list, for /api/classes
 let lastOk = 0, lastErr = null, acCount = 0, polling = false;
 
 async function poll() {
@@ -516,6 +517,7 @@ async function poll() {
     lastOk = Date.now();
     lastErr = null;
     acCount = d.aircraft.length;
+    current = d.aircraft;
   } catch (e) {
     lastErr = e.message;
   } finally {
@@ -601,12 +603,23 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, await updateSettings({ watch: b.remove ? list.filter((x) => x !== cs) : [...list, cs] }));
     }
     if (p === '/api/alerts') return sendJson(res, alerts.slice(-100).reverse());
+    // Military / helicopter flags for the aircraft in view (the card can't see the aircraft database itself).
+    if (p === '/api/classes') {
+      const out = {};
+      for (const a of current) {
+        const mil = isMilitary(a), heli = isHeli(a);
+        if (!mil && !heli) continue;
+        const rec = DB.mil.get(a.hex) || DB.heli.get(a.hex);
+        out[a.hex] = { mil, heli, ...(rec ? { type: rec.type, desc: rec.desc, reg: rec.reg, owner: rec.owner } : {}) };
+      }
+      return sendJson(res, out);
+    }
     if (p === '/api/test-alert' && req.method === 'POST') {
       const rec = await send({ kind: 'test', priority: 'normal', tag: 'adsb-test', title: '✈️ ADS-B alerts are working', message: `Test from adsb-monitor at ${hhmm(Date.now())}.`, image: '' });
       return sendJson(res, rec);
     }
     if (p === '/' || p === '/api') {
-      return sendJson(res, { service: 'adsb-monitor', endpoints: ['/api/status', '/api/coverage', '/api/settings', '/api/watch', '/api/alerts', '/api/test-alert', SKYAWARE, '/status.json'] });
+      return sendJson(res, { service: 'adsb-monitor', endpoints: ['/api/status', '/api/coverage', '/api/settings', '/api/watch', '/api/alerts', '/api/classes', '/api/test-alert', SKYAWARE, '/status.json'] });
     }
     sendJson(res, { error: 'not found' }, 404);
   } catch (e) {

@@ -33,6 +33,22 @@ const CATEGORY = {
   A6: "High performance", A7: "Rotorcraft", B1: "Glider", B2: "Balloon", B4: "Ultralight", B6: "Drone",
   C1: "Emergency vehicle", C2: "Service vehicle", C3: "Obstruction",
 };
+// Aircraft classes, most specific first. Military/helicopter flags come from adsb-monitor's database when available.
+const CLASSES = [
+  ["mil", "Military", "mdi:shield-airplane", "#d4a72c"],
+  ["heli", "Helicopter", "mdi:helicopter", "#26a69a"],
+  ["com", "Commercial", "mdi:airplane", "#4ea1ff"],
+  ["priv", "Private", "mdi:account", "#b07cf0"],
+  ["other", "Unclassified", "mdi:shape-outline", "#9e9e9e"],
+  ["unk", "Unknown", "mdi:help-circle-outline", "#6f6f6f"],
+];
+const CLASS = Object.fromEntries(CLASSES.map(([k, l, i, c]) => [k, { k, l, i, c }]));
+const MIL_RANGES = [[0xadf7c8, 0xafffff], [0xc20000, 0xc3ffff], [0x43c000, 0x43cfff], [0x3aa000, 0x3affff], [0x3b7000, 0x3bffff], [0x3ea000, 0x3ebfff], [0x3f4000, 0x3fbfff]];
+const MIL_CALLSIGN = /^(CFC|RCH|CNV|RRR|ASY|NATO|PAT|SAM|SPAR|GAF|CTM|BAF|IAM|HKY|KIWI|TUAF|VENUS|NAVY|ARMY|EVAC|REACH|TOPCT)\d/;
+// Callsigns that are registrations: US N-numbers, Canadian C-Fxxx/C-Gxxx/C-Ixxx, and other "prefix + letters" ones.
+const REG_CALLSIGN = /^(N[1-9][0-9A-Z]{0,4}|C[FGI][A-Z]{3}|G[A-Z]{4}|D[A-Z]{4}|F[A-Z]{4}|VH[A-Z]{3}|ZK[A-Z]{3}|EI[A-Z]{3})$/;
+const AIRLINE_CALLSIGN = /^[A-Z]{3}\d{1,4}[A-Z]{0,2}$/;
+const AIRLINE_OWNER = /air ?lines?|airways|airline|express|cargo|fedex|\bups\b|dhl|jazz|westjet|porter|flair|transat|lufthansa|klm|easyjet|ryanair/i;
 const MODES = { autopilot: "AP", vnav: "VNAV", lnav: "LNAV", tcas: "TCAS", althold: "ALT", approach: "APP" };
 
 // Plane silhouettes, nose up, centred on 0,0.
@@ -169,6 +185,7 @@ class SkyAwareCard extends HTMLElement {
     this._sort = get("sort", "dist");
     this._sortDir = Number(get("sortdir", "1"));
     this._covRange = get("covrange", "7");
+    this._clsFilter = get("class", "all");
     this._covOn = get("covmap", "0") === "1";
     this._acs = [];
     this._view = null; // map centre {x, y} (mercator units) and zoom z
@@ -252,7 +269,7 @@ class SkyAwareCard extends HTMLElement {
       every(() => this._poll(), Math.max(1, this._config.refresh) * 1000),
     ];
     if (this._config.monitor.length) {
-      this._timers.push(every(() => this._loadMonitor(), 30000), every(() => this._loadCoverage(), 300000));
+      this._timers.push(every(() => this._loadMonitor(), 30000), every(() => this._loadCoverage(), 300000), every(() => this._loadClasses(), 15000));
     }
     if (this._config.lookups) {
       this._timers.push(every(() => this._lookupRoutes(), 15000), every(() => this._lookupAircraft(), 1500));
@@ -293,6 +310,12 @@ class SkyAwareCard extends HTMLElement {
     this._renderHead();
     if (this._tab === "alerts") this._renderAlerts();
     if (this._tab === "flight") this._renderFlight();
+  }
+
+  async _loadClasses() {
+    try {
+      this._classes = await this._mon("/api/classes");
+    } catch (e) {}
   }
 
   async _loadCoverage() {
@@ -518,6 +541,27 @@ class SkyAwareCard extends HTMLElement {
     return best;
   }
 
+  // Commercial / helicopter / military / private / unclassified / unknown.
+  _class(a) {
+    const m = this._classes?.[a.hex], cs = callsign(a), info = this._info(a.hex);
+    const hex = parseInt(a.hex, 16);
+    if (m?.mil || MIL_RANGES.some(([lo, hi]) => hex >= lo && hex <= hi) || MIL_CALLSIGN.test(cs)) return CLASS.mil;
+    if (m?.heli || a.category === "A7") return CLASS.heli;
+    const reg = (info?.reg || m?.reg || "").replace(/-/g, "").toUpperCase();
+    if (cs && (cs === reg || REG_CALLSIGN.test(cs))) return CLASS.priv;
+    if (AIRLINE_CALLSIGN.test(cs)) return CLASS.com;
+    // No callsign (often just not received yet): go by owner, then by size.
+    if (AIRLINE_OWNER.test(info?.owner || m?.owner || "")) return CLASS.com;
+    if (!cs && ["A3", "A4", "A5"].includes(a.category)) return CLASS.com;
+    if (["A1", "A2", "B1", "B4"].includes(a.category)) return CLASS.priv;
+    if (cs || info?.type || info?.reg || a.category) return CLASS.other;
+    return CLASS.unk;
+  }
+
+  _tag(c, short) {
+    return `<span class="ctag" style="--c:${c.c}" title="${c.l}"><ha-icon icon="${c.i}"></ha-icon>${short ? "" : c.l}</span>`;
+  }
+
   _info(hex) {
     return acCache().get(hex) || null;
   }
@@ -624,6 +668,16 @@ class SkyAwareCard extends HTMLElement {
         tbody tr.stale td { opacity: .55; }
         tbody tr.emerg { background: color-mix(in srgb, var(--sa-bad) 22%, transparent); }
         .sw { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+        .ctag { display: inline-flex; align-items: center; gap: 4px; font-size: .74em; font-weight: 600; padding: 2px 8px 2px 6px; border-radius: 999px;
+                color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); white-space: nowrap; vertical-align: middle; }
+        .ctag ha-icon { --mdc-icon-size: 14px; }
+        .ctag:empty, .ctag.icon { padding: 2px 5px; }
+        .cfilter { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+        .cfilter button { border: 1px solid var(--divider-color); background: transparent; color: var(--primary-text-color); font: inherit; font-size: .8em;
+                          padding: 4px 10px; border-radius: 999px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+        .cfilter button ha-icon { --mdc-icon-size: 15px; color: var(--c); }
+        .cfilter button.on { border-color: var(--c, var(--primary-color)); background: color-mix(in srgb, var(--c, var(--primary-color)) 18%, transparent); }
+        .cfilter button .n { color: var(--secondary-text-color); font-variant-numeric: tabular-nums; }
         .tag { font-size: .72em; padding: 1px 5px; border-radius: 5px; background: var(--card-background-color, #fff); color: var(--secondary-text-color); margin-left: 4px; }
         .listbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; font-size: .82em; color: var(--secondary-text-color); }
 
@@ -732,6 +786,7 @@ class SkyAwareCard extends HTMLElement {
 
         <div class="pane" id="p-list">
           <div class="tiles" id="rx-tiles"></div>
+          <div class="cfilter" id="cfilter"></div>
           <div class="scroll"><table><thead id="lhead"></thead><tbody id="lbody"></tbody></table></div>
           <div class="listbar"><span id="lfoot"></span></div>
         </div>
@@ -781,6 +836,13 @@ class SkyAwareCard extends HTMLElement {
     });
     this.$("alerts").addEventListener("keydown", (e) => {
       if (e.key === "Enter" && e.target.id === "watch-in") this.$("watch-add").click();
+    });
+    this.$("cfilter").addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-c]");
+      if (!b) return;
+      this._clsFilter = b.dataset.c === this._clsFilter ? "all" : b.dataset.c;
+      this._save("class", this._clsFilter);
+      this._renderList();
     });
     this.$("lhead").addEventListener("click", (e) => {
       const th = e.target.closest("th[data-k]");
@@ -1194,7 +1256,7 @@ class SkyAwareCard extends HTMLElement {
     const rt = this._route(a), info = this._info(a.hex);
     const vr = vrate(a);
     pop.innerHTML = `
-      <div class="cs"><span class="sw" style="background:${altColor(a.alt_baro)}"></span>${esc(cs || a.hex.toUpperCase())}
+      <div class="cs"><span class="sw" style="background:${altColor(a.alt_baro)}"></span>${esc(cs || a.hex.toUpperCase())}${this._tag(this._class(a), true)}
         ${info?.icao ? `<span class="tag">${esc(info.icao)}</span>` : ""}${info?.reg ? `<span class="tag">${esc(info.reg)}</span>` : ""}
         <ha-icon class="x" icon="mdi:close" data-act="close"></ha-icon></div>
       <div class="rt">${rt ? `<b>${esc(rt.o.iata || rt.o.icao)}</b> ${esc(rt.o.location)} → <b>${esc(rt.d.iata || rt.d.icao)}</b> ${esc(rt.d.location)}` : `<span class="muted">${cs ? "Route unknown" : "No callsign"}</span>`}</div>
@@ -1235,13 +1297,14 @@ class SkyAwareCard extends HTMLElement {
     ].join("");
 
     const cols = [
-      ["cs", "Flight"], ["route", "Route"], ["type", "Type"], ["reg", "Reg"], ["sq", "Squawk"], ["alt", "Altitude", 1], ["vr", "V/S", 1],
+      ["cs", "Flight"], ["cls", "Class"], ["route", "Route"], ["type", "Type"], ["reg", "Reg"], ["sq", "Squawk"], ["alt", "Altitude", 1], ["vr", "V/S", 1],
       ["gs", "Speed", 1], ["trk", "Track", 1], ["dist", "Dist", 1], ["rssi", "RSSI", 1], ["msgs", "Msgs", 1], ["seen", "Seen", 1],
     ];
     const key = (a, k) => {
       const info = this._info(a.hex);
       switch (k) {
         case "cs": return callsign(a) || "~" + a.hex;
+        case "cls": return CLASSES.findIndex(([c]) => c === this._class(a).k);
         case "route": return this._route(a)?.o.iata || "~";
         case "type": return info?.icao || "~";
         case "reg": return info?.reg || "~";
@@ -1257,7 +1320,14 @@ class SkyAwareCard extends HTMLElement {
       }
     };
     const k = this._sort, dir = this._sortDir;
-    const rows = [...acs].sort((a, b) => {
+    // Class filter chips with counts.
+    const counts = {};
+    for (const a of acs) counts[this._class(a).k] = (counts[this._class(a).k] || 0) + 1;
+    if (this._clsFilter !== "all" && !counts[this._clsFilter]) this._clsFilter = "all";
+    const f = this._clsFilter;
+    this.$("cfilter").innerHTML = `<button data-c="all" class="${f === "all" ? "on" : ""}">All <span class="n">${acs.length}</span></button>` +
+      CLASSES.filter(([c]) => counts[c]).map(([c, l, i, col]) => `<button data-c="${c}" class="${f === c ? "on" : ""}" style="--c:${col}"><ha-icon icon="${i}"></ha-icon>${l} <span class="n">${counts[c]}</span></button>`).join("");
+    const rows = [...acs].filter((a) => f === "all" || this._class(a).k === f).sort((a, b) => {
       const x = key(a, k), y = key(b, k);
       return (typeof x === "string" ? x.localeCompare(y) : x - y) * dir;
     });
@@ -1269,9 +1339,10 @@ class SkyAwareCard extends HTMLElement {
       const cls = [a.hex === this._sel ? "sel" : "", a.seen > 30 ? "stale" : "", em ? "emerg" : ""].join(" ");
       return `<tr data-hex="${esc(a.hex)}" class="${cls}">
         <td><span class="sw" style="background:${altColor(a.alt_baro)}"></span><b>${esc(callsign(a) || "")}</b>${callsign(a) ? "" : `<span class="muted">${esc(a.hex.toUpperCase())}</span>`}${(a.mlat || []).includes("lat") ? `<span class="tag">MLAT</span>` : ""}</td>
+        <td>${this._tag(this._class(a))}</td>
         <td>${rt ? `${esc(rt.o.iata || rt.o.icao)} → ${esc(rt.d.iata || rt.d.icao)}` : `<span class="muted">–</span>`}</td>
-        <td>${esc(info?.icao || "")}</td>
-        <td>${esc(info?.reg || "")}</td>
+        <td>${esc(info?.icao || this._classes?.[a.hex]?.type || "")}</td>
+        <td>${esc(info?.reg || this._classes?.[a.hex]?.reg || "")}</td>
         <td class="${em ? "bad" : ""}">${esc(a.squawk || "")}${em ? ` ${em}` : ""}</td>
         <td class="r">${a.alt_baro === "ground" ? "GND" : num(a.alt_baro)}</td>
         <td class="r">${vr ? `<span class="${vr > 0 ? "good" : "warn"}">${vr > 0 ? "▲" : "▼"}</span> ${num(Math.abs(vr))}` : ""}</td>
@@ -1324,7 +1395,7 @@ class SkyAwareCard extends HTMLElement {
       <div class="photo-wrap">${photo?.src ? `<a href="${esc(photo.link)}" target="_blank" rel="noreferrer"><img class="photo" src="${esc(photo.src)}" alt=""></a><div class="cr">© ${esc(photo.by)}</div>`
         : `<div class="photo" style="display:flex;align-items:center;justify-content:center;color:var(--secondary-text-color)"><ha-icon icon="mdi:airplane" style="--mdc-icon-size:48px;opacity:.4"></ha-icon></div>`}</div>
       <div class="fid">
-        <div class="cs">${esc(cs || a.hex.toUpperCase())}${iataFlight && iataFlight !== cs ? `<span class="pill dim">${esc(iataFlight)}</span>` : ""}
+        <div class="cs">${esc(cs || a.hex.toUpperCase())}${iataFlight && iataFlight !== cs ? `<span class="pill dim">${esc(iataFlight)}</span>` : ""}${this._tag(this._class(a))}
           ${phase ? `<span class="pill ok">${phase}</span>` : ""}${!live ? `<span class="pill warn">Signal lost</span>` : ""}${sqName ? `<span class="pill bad">${sqName} · ${a.squawk}</span>` : ""}</div>
         <div class="al">${logo ? `<img src="https://www.flightaware.com/images/airline_logos/90p/${esc(logo)}.png" alt="" onerror="this.remove()">` : ""}${esc(airlineName || info?.owner || (cs ? "" : "No callsign"))}</div>
         <div class="ty">${[info?.mfr && info?.type ? `${info.mfr} ${info.type}` : info?.type, info?.icao && `(${info.icao})`].filter(Boolean).map(esc).join(" ")}
