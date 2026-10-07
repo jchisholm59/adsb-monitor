@@ -18,9 +18,15 @@ Two pieces that work together:
 > on your network (the PiAware Pi itself works), kept running with pm2 or systemd. HACS can't install it for you;
 > see [Install → 1. The monitor](#1-the-monitor).
 
+![Map tab: live aircraft with range rings, altitude-coloured trails and a selected flight](docs/map.png)
+
+| Flight status | Light theme |
+|---|---|
+| ![Flight tab: route, progress, estimated arrival and live data](docs/flight.png) | ![Map tab in Home Assistant's light theme](docs/map-light.png) |
+
 | Coverage | Aircraft | Alerts |
 |---|---|---|
-| ![Coverage tab](docs/coverage.png) | ![Aircraft tab](docs/aircraft.png) | ![Alerts tab](docs/alerts.png) |
+| ![Coverage tab: polar range chart by altitude band](docs/coverage.png) | ![Aircraft tab: sortable list with routes and types](docs/aircraft.png) | ![Alerts tab: what to alert on, flights to watch, recent alerts](docs/alerts.png) |
 
 ## Features
 

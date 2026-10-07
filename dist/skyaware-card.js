@@ -560,7 +560,7 @@ class SkyAwareCard extends HTMLElement {
         .map { position: relative; height: var(--sa-h); border-radius: 12px; overflow: hidden; background: var(--secondary-background-color);
                touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
         .map.drag { cursor: grabbing; }
-        #tiles { position: absolute; inset: 0; }
+        #tiles { position: absolute; inset: 0; z-index: 0; } /* own stacking context: labels layer stays under the overlays */
         #tiles img { position: absolute; left: 0; top: 0; pointer-events: none; }
         #ov { position: absolute; inset: 0; width: 100%; height: 100%; }
         .ring { fill: none; stroke: var(--sa-ring); stroke-width: 1.2; }
