@@ -458,8 +458,9 @@ export class Cockpit {
       if (!m) {
         m = {
           pt: this.points.add({ pixelSize: 9, outlineColor: C.Color.BLACK, outlineWidth: 1.5 }),
-          lb: this.labels.add({ font: "13px sans-serif", fillColor: C.Color.WHITE, outlineColor: C.Color.BLACK, outlineWidth: 3,
-            style: C.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new C.Cartesian2(10, -10), horizontalOrigin: C.HorizontalOrigin.LEFT,
+          lb: this.labels.add({ font: "600 13px sans-serif", fillColor: C.Color.WHITE, showBackground: true,
+            backgroundColor: new C.Color(0, 0, 0, 0.55), backgroundPadding: new C.Cartesian2(5, 3),
+            pixelOffset: new C.Cartesian2(10, -10), horizontalOrigin: C.HorizontalOrigin.LEFT,
             distanceDisplayCondition: new C.DistanceDisplayCondition(0, 400000) }),
         };
         this.marks.set(hex, m);

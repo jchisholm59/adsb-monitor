@@ -23,6 +23,8 @@ Two pieces that work together:
 
 ![Satellite view: a departure climbing out of Halifax for Ottawa, with the Swissair 111 landmark off the coast](docs/satellite.png)
 
+![Cockpit tab: Delta 113, Rome to Boston, an A330-300 at 36,000 ft coming in over the Nova Scotia coast on Google's photorealistic 3D tiles, with JetBlue 2260 ahead and the HUD's heading tape, ground speed and altitude](docs/cockpit.jpg)
+
 | Map filter | Jump to aircraft (from the list's 📍) |
 |---|---|
 | ![Map filter: chosen classes and airlines only, with counts and logos](docs/map-filter.png) | ![The map centred and zoomed on an aircraft picked from the Aircraft list](docs/locate.png) |
@@ -62,6 +64,15 @@ Two pieces that work together:
   cruising, descending, on approach). Live altitude, vertical rate, speed, track, distance and bearing from you,
   squawk, autopilot (selected altitude, heading, QNH, modes) and signal. Altitude and speed charts. Links to
   FlightAware, Flightradar24, ADS-B Exchange and Planespotters. A bell button: **Alert me when it lands**.
+- **Cockpit**: sit in the selected aircraft. Its view out of the windscreen over Google's photorealistic 3D world
+  (CesiumJS, loaded only when you open the tab), driven by your receiver's live data: the camera follows the reported
+  track, climbs and descends with the flight path, and **banks in turns** (from the aircraft's reported roll when it
+  sends one, else from its turn rate). Between reports it flies on at the reported speed and eases onto each new fix,
+  so the view never jumps. Other traffic shows as altitude-coloured points with callsign and altitude. A HUD with
+  callsign, route, type and registration, a heading tape, ground speed, altitude and vertical speed. Drag to look
+  around, wheel to zoom, **Chase view** for a camera behind the aircraft, ◀ ▶ to hop between aircraft. Needs a free
+  [Cesium ion](https://ion.cesium.com/) token: paste it into the tab once (it's saved to your Home Assistant profile).
+  Wants a decent GPU; fine on desktops and phones.
 - **Coverage**: polar chart of the farthest position heard in each 5° of bearing, for three altitude bands, over
   today / 7 days / 30 days / all time, with records and per-day charts.
 - **Alerts**: everything below, as switches, plus a test button and the alert log.
