@@ -111,7 +111,9 @@ const STYLE = `
   .ck .btns button:hover { background: rgba(255,255,255,.18); }
   .ck .btns button.on { background: var(--primary-color, #03a9f4); border-color: transparent; }
   .ck .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; line-height: 1.5; background: #0b1020; }
-  .ck .msg code { background: rgba(255,255,255,.12); padding: 1px 5px; border-radius: 4px; }
+  .ck .msg > div { max-width: 560px; text-align: left; }
+  .ck .msg ol { margin: 8px 0 0; padding-left: 22px; } .ck .msg li { margin: 4px 0; }
+  .ck .msg code { background: rgba(255,255,255,.12); padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
   .ck .msg:empty { display: none; }
 `;
 
@@ -177,8 +179,10 @@ export class Cockpit {
   async start() {
     const token = String(this.opts.token || "").trim();
     if (!token) {
-      this.$.msg.innerHTML = `The cockpit view needs a Cesium ion token.<br>Add <code>cesium_token: &lt;token&gt;</code> to this card's settings
-        (create one at ion.cesium.com/tokens with the <code>assets:read</code> scope, and restrict its Allowed URLs to your Home Assistant addresses).`;
+      this.$.msg.innerHTML = `<div><b>The cockpit view needs a Cesium ion token.</b><ol>
+        <li>Create one at <a href="https://ion.cesium.com/tokens" target="_blank" rel="noreferrer" style="color:inherit">ion.cesium.com/tokens</a>
+          with only the <code>assets:read</code> scope, its Allowed URLs limited to your Home Assistant addresses.</li>
+        <li>Add <code>cesium_token: &lt;token&gt;</code> to this card's YAML, save, and reload the page.</li></ol></div>`;
       return;
     }
     let C;
@@ -228,8 +232,8 @@ export class Cockpit {
       } catch (e2) {
         const m = String(e2?.message || e?.message || e2 || e);
         this.$.msg.innerHTML = /401|403|Invalid access token|Unauthorized/i.test(m)
-          ? `Cesium ion refused the token. Check it's pasted correctly and that its Allowed URLs include <code>${esc(location.origin)}</code>.`
-          : `Couldn't load the 3D world: ${esc(m)}`;
+          ? `<div>Cesium ion refused the token. Check it's pasted correctly and that its Allowed URLs include <code>${esc(location.origin)}</code>.</div>`
+          : `<div>Couldn't load the 3D world: ${esc(m)}</div>`;
         return;
       }
     }
