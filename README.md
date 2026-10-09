@@ -75,6 +75,11 @@ Two pieces that work together:
   around, wheel to zoom, **Chase view** to follow it from behind (the silhouette banks with it), ◀ ▶ to hop between aircraft. Needs a free
   [Cesium ion](https://ion.cesium.com/) token: paste it into the tab once (it's saved to your Home Assistant profile).
   Wants a decent GPU; fine on desktops and phones.
+  **Approach mode** switches on by itself when the aircraft is on final to a runway near you: the extended centreline
+  and the 3° glidepath appear in the 3D view, and the HUD gets ILS-style glideslope and localizer diamonds (real ILS
+  scaling) with the runway, distance to the threshold, and how far high or low and left or right it is. Runway data
+  comes from [OurAirports](https://ourairports.com/data/) (free, fetched at most monthly). It's computed from the
+  aircraft's reported position, not a real ILS signal.
 - **Coverage**: polar chart of the farthest position heard in each 5° of bearing, for three altitude bands, over
   today / 7 days / 30 days / all time, with records and per-day charts.
 - **Alerts**: everything below, as switches, plus a test button and the alert log.

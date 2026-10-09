@@ -84,6 +84,93 @@ function correctionStep(distM, speedMps, dt) {
 
 // Height in metres above the WGS84 ellipsoid. alt_geom is GNSS height on WGS84; alt_baro is pressure altitude,
 // close to MSL (the geoid is about 20 m below the ellipsoid around Nova Scotia, small at these scales).
+// ---- runways (approach mode) -------------------------------------------------------------------------------
+// OurAirports' open runway data (updated daily, CORS open, ~4 MB). Fetched at most monthly; only the runway ends
+// within RUNWAY_RANGE_NM of the receiver are kept, in localStorage.
+const RUNWAYS_URL = "https://davidmegginson.github.io/ourairports-data/runways.csv";
+const RUNWAY_RANGE_NM = 250;
+const NM = 1852;
+const GS_DEG = 3; // glidepath angle
+const GPI_FT = 1000; // glidepath aims this far past the threshold (as an ILS does)
+const GS_DOT_DEG = 0.35; // ILS glideslope: 0.7° full scale = 2 dots
+const LOC_DOT_DEG = 1.25; // ILS localizer: ~2.5° full scale = 2 dots
+const toRad = (d) => (d * Math.PI) / 180;
+const toDeg = (r) => (r * 180) / Math.PI;
+const diffDeg = (a, b) => ((a - b + 540) % 360) - 180; // signed a - b in (-180, 180]
+
+function distNm(la1, lo1, la2, lo2) {
+  const dla = toRad(la2 - la1), dlo = toRad(lo2 - lo1);
+  const h = Math.sin(dla / 2) ** 2 + Math.cos(toRad(la1)) * Math.cos(toRad(la2)) * Math.sin(dlo / 2) ** 2;
+  return (2 * 6371008.8 * Math.asin(Math.min(1, Math.sqrt(h)))) / NM;
+}
+function brgDeg(la1, lo1, la2, lo2) {
+  const y = Math.sin(toRad(lo2 - lo1)) * Math.cos(toRad(la2));
+  const x = Math.cos(toRad(la1)) * Math.sin(toRad(la2)) - Math.sin(toRad(la1)) * Math.cos(toRad(la2)) * Math.cos(toRad(lo2 - lo1));
+  return norm360(toDeg(Math.atan2(y, x)));
+}
+function destPt(lat, lon, brg, m) {
+  const d = m / 6371008.8, b = toRad(brg), p1 = toRad(lat), l1 = toRad(lon);
+  const p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(b));
+  const l2 = l1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2));
+  return { lat: toDeg(p2), lon: ((toDeg(l2) + 540) % 360) - 180 };
+}
+
+function csvRow(line) {
+  const out = [];
+  let cur = "", q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === '"' && line[i + 1] === '"') (cur += '"'), i++;
+      else if (c === '"') q = false;
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") out.push(cur), (cur = "");
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+// Runway ends near the receiver: { icao, id, lat, lon (threshold, after any displacement), elev (ft), hdg (true),
+// flat, flon (the far end) }.
+async function loadRunways(rx) {
+  if (!rx || !fin(rx.lat) || !fin(rx.lon)) return [];
+  const KEY = "skyaware-card:runways";
+  try {
+    const c = JSON.parse(localStorage.getItem(KEY) || "null");
+    if (c && Date.now() - c.at < 30 * 86400000 && distNm(c.lat, c.lon, rx.lat, rx.lon) < 20) return c.ends;
+  } catch (e) {}
+  const r = await fetch(RUNWAYS_URL);
+  if (!r.ok) throw new Error("runway data: HTTP " + r.status);
+  const lines = (await r.text()).split(/\r?\n/);
+  const h = csvRow(lines[0]);
+  const ix = Object.fromEntries(h.map((k, i) => [k, i]));
+  const num = (v) => (v === "" || v == null ? NaN : Number(v));
+  const ends = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i]) continue;
+    const f = csvRow(lines[i]);
+    if (f[ix.closed] === "1" || num(f[ix.length_ft]) < 2500) continue;
+    const E = (k) => ({ id: f[ix[k + "_ident"]], lat: num(f[ix[k + "_latitude_deg"]]), lon: num(f[ix[k + "_longitude_deg"]]),
+      elev: num(f[ix[k + "_elevation_ft"]]), hdg: num(f[ix[k + "_heading_degT"]]), disp: num(f[ix[k + "_displaced_threshold_ft"]]) });
+    const le = E("le"), he = E("he");
+    if (![le.lat, le.lon, he.lat, he.lon].every(fin)) continue;
+    if (distNm(rx.lat, rx.lon, le.lat, le.lon) > RUNWAY_RANGE_NM) continue;
+    for (const [a, b] of [[le, he], [he, le]]) {
+      const hdg = fin(a.hdg) ? a.hdg : brgDeg(a.lat, a.lon, b.lat, b.lon);
+      const t = a.disp > 0 ? destPt(a.lat, a.lon, hdg, a.disp * FT) : a;
+      const elev = fin(a.elev) ? a.elev : b.elev;
+      if (!fin(elev)) continue;
+      ends.push({ icao: f[ix.airport_ident], id: a.id, lat: +t.lat.toFixed(6), lon: +t.lon.toFixed(6), elev, hdg: +hdg.toFixed(1), flat: b.lat, flon: b.lon });
+    }
+  }
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ at: Date.now(), lat: rx.lat, lon: rx.lon, ends }));
+  } catch (e) {}
+  return ends;
+}
+
 function heightM(a) {
   if (a.alt_baro === "ground") return null;
   const ft = fin(a.alt_geom) ? a.alt_geom : fin(a.alt_baro) ? a.alt_baro : null;
@@ -118,6 +205,10 @@ const STYLE = `
   .ck .bore { position: absolute; left: 50%; top: 50%; width: 46px; height: 14px; transform: translate(-50%, -50%); }
   .ck .status { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); padding: 6px 12px; border-radius: 8px; background: rgba(0,0,0,.55); font-size: .9em; text-align: center; }
   .ck .status:empty { display: none; }
+  .ck .apr { position: absolute; left: 50%; top: 50%; width: 380px; height: 290px; transform: translate(-50%, -50%); overflow: visible; }
+  .ck .aprinfo { position: absolute; left: 50%; top: 50px; transform: translateX(-50%); padding: 3px 10px; border: 1.5px solid #ff6ef0; border-radius: 6px; background: rgba(0,0,0,.35); color: #ffb8f6; font-size: .85em; white-space: nowrap; }
+  .ck .aprinfo:empty { display: none; }
+  .ck .aprinfo b { color: #fff; }
   .ck .btns { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   .ck .btns button { font: inherit; font-size: .85em; color: #fff; background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.35); border-radius: 999px; padding: 5px 11px; cursor: pointer; }
   .ck .btns button:hover { background: rgba(255,255,255,.18); }
@@ -135,7 +226,8 @@ const STYLE = `
 `;
 
 export class Cockpit {
-  // opts: { token, saveToken(token) -> Promise, color(a) -> css colour, onPick(hex), onExit(), label(a) -> {cs, sub} }
+  // opts: { token, saveToken(token) -> Promise, color(a) -> css colour, onPick(hex), onExit(), label(a) -> {cs, sub},
+  //         receiver {lat, lon} (for the runway list), dest(a) -> destination ICAO (preferred runway for approach mode) }
   constructor(container, opts) {
     this.el = container;
     this.opts = opts;
@@ -159,6 +251,8 @@ export class Cockpit {
           <div class="box spd"><b>–</b><span>GS kt</span></div>
           <div class="box alt"><b>–</b><span>ALT ft</span><span class="vs"></span></div>
           <svg class="bore" viewBox="-23 -7 46 14"><path d="M-23,0H-9L-5,5L0,0L5,5L9,0H23" fill="none" stroke="#7CFC9A" stroke-width="2"/></svg>
+          <svg class="apr" viewBox="-190 -145 380 290"></svg>
+          <div class="aprinfo"></div>
           <div class="status"></div>
           <div class="btns">
             <button data-ck="prev" title="Previous aircraft (by distance)">◀</button>
@@ -172,7 +266,7 @@ export class Cockpit {
         <div class="msg">Loading the 3D world…</div>
       </div>`;
     const q = (s) => this.el.querySelector(s);
-    this.$ = { scene: q(".scene"), cs: q(".ident .cs"), sub: q(".ident .sub"), tape: q(".tape"), spd: q(".spd b"),
+    this.$ = { apr: q(".apr"), aprinfo: q(".aprinfo"), scene: q(".scene"), cs: q(".ident .cs"), sub: q(".ident .sub"), tape: q(".tape"), spd: q(".spd b"),
       alt: q(".alt b"), vs: q(".alt .vs"), status: q(".status"), msg: q(".msg"), credits: q(".credits"), mode: q('[data-ck="mode"]') };
     this._on(this.el, "click", (e) => {
       const b = e.target.closest("[data-ck]");
@@ -257,6 +351,9 @@ export class Cockpit {
     this.chaseBb = this.bbs.add({ image: REAR_SVG, width: 132, height: 66, show: false });
     this.labels = scene.primitives.add(new C.LabelCollection());
     this.marks = new Map(); // hex -> { pt, lb }
+    this.aprLines = scene.primitives.add(new C.PolylineCollection());
+    this.runways = [];
+    loadRunways(this.opts.receiver).then((r) => (this.runways = r || []), (e) => console.warn("skyaware-cockpit: runway data", e));
     this.$.msg.textContent = "";
     this._initInput();
     this._last = performance.now();
@@ -364,7 +461,7 @@ export class Cockpit {
   _groundAt(lat, lon) {
     const C = this.C;
     try {
-      const exclude = this.points ? [this.points, this.labels] : [];
+      const exclude = this.points ? [this.points, this.labels, this.aprLines, this.bbs].filter(Boolean) : [];
       const h = this.w.scene.sampleHeight(C.Cartographic.fromDegrees(lon, lat), exclude);
       return fin(h) ? h : null;
     } catch (e) {
@@ -461,10 +558,115 @@ export class Cockpit {
     const age = (now - entry.recvMs) / 1000;
     this.$.status.textContent = age > LOST_S ? "Signal lost: holding last position"
       : age > NOTE_S ? `Last position ${Math.round(age)} s ago${p.stale ? ": holding" : ": estimating"}` : this._note || "";
+    if (now - (this._aprMs || 0) > 500) {
+      this._aprMs = now;
+      this._approach = this._findApproach(a, p, now);
+      this._drawApproachLines();
+    }
     if (now - (this._hudMs || 0) > 100) {
       this._hudMs = now;
       this._hud(a, p);
+      this._hudApproach();
     }
+  }
+
+  // ---- approach mode ---------------------------------------------------------------------------
+
+  // Height of a threshold above the ellipsoid, from the rendered 3D surface (retried until the tiles are there).
+  _thresholdHeight(r, now) {
+    if (r._h != null || now - (r._hTry || 0) < 2000) return r._h ?? null;
+    r._hTry = now;
+    const g = this._groundAt(r.lat, r.lon);
+    if (g != null) r._h = g;
+    return r._h ?? null;
+  }
+
+  // The runway end this aircraft is approaching, if any: within 15 nm of the threshold and short of it, tracking
+  // within 25° of the runway, within 2 nm of the extended centreline, below ~6,000 ft above the threshold and not
+  // climbing. Prefers the flight's destination. The current runway is kept on looser limits (no flicker).
+  _findApproach(a, p, now) {
+    if (p.onGround || !this.runways.length) return null;
+    const fpm = fin(a.geom_rate) ? a.geom_rate : fin(a.baro_rate) ? a.baro_rate : 0;
+    if (fpm > 500) return null;
+    const dest = this.opts.dest?.(a);
+    const cur = this._approach?.r;
+    let best = null;
+    for (const r of this.runways) {
+      if (Math.abs(r.lat - p.lat) > 0.3) continue; // ~18 nm: cheap prefilter
+      const keep = r === cur;
+      const d = distNm(r.lat, r.lon, p.lat, p.lon);
+      if (d > (keep ? 18 : 15)) continue;
+      if (Math.abs(diffDeg(p.trk, r.hdg)) > (keep ? 40 : 25)) continue;
+      const off = diffDeg(brgDeg(r.lat, r.lon, p.lat, p.lon), r.hdg + 180);
+      const along = d * Math.cos(toRad(off)), cross = d * Math.sin(toRad(off));
+      if (along < (keep ? 0.05 : 0.2) || Math.abs(cross) > (keep ? 3 : 2)) continue;
+      // Height above the threshold: GPS altitude vs the 3D surface there, else baro corrected with the reported QNH.
+      const thrH = this._thresholdHeight(r, now);
+      let above, src;
+      if (fin(a.alt_geom) && p.h != null && thrH != null) (above = (p.h - thrH) / FT), (src = "GPS");
+      else if (fin(a.alt_baro)) {
+        above = a.alt_baro + (fin(a.nav_qnh) ? (a.nav_qnh - 1013.25) * 27 : 0) - r.elev;
+        src = fin(a.nav_qnh) ? "baro+QNH" : "baro";
+      } else continue;
+      if (above > (keep ? 7000 : 6000) || above < -200) continue;
+      const score = Math.abs(cross) + along * 0.05 - (dest && dest === r.icao ? 5 : 0) - (keep ? 0.5 : 0);
+      if (!best || score < best.score) best = { r, d, along, cross, above, src, score };
+    }
+    if (!best) return null;
+    const alongFt = (best.along * NM) / FT;
+    // Glideslope: angle above the glidepath origin, minus 3°. Positive = high.
+    best.gsDev = toDeg(Math.atan2(best.above, alongFt + GPI_FT)) - GS_DEG;
+    best.pathFt = Math.tan(toRad(GS_DEG)) * (alongFt + GPI_FT);
+    // Localizer: angle seen from 1,000 ft beyond the far end. Positive = aircraft right of the centreline.
+    const ant = destPt(best.r.flat, best.r.flon, best.r.hdg, 1000 * FT);
+    best.locDev = -diffDeg(brgDeg(ant.lat, ant.lon, p.lat, p.lon), best.r.hdg + 180);
+    return best;
+  }
+
+  // Extended centreline (dashed, 10 nm) and the 3° glidepath in the air, once the threshold's height is known.
+  _drawApproachLines() {
+    const C = this.C, ap = this._approach, r = ap?.r;
+    const key = r && r._h != null ? r.icao + r.id : "";
+    if (key === this._aprKey) return;
+    this._aprKey = key;
+    this.aprLines.removeAll();
+    if (!key) return;
+    const centre = [], path = [];
+    for (let nm = 0; nm <= 10.001; nm += 0.25) {
+      const pt = destPt(r.lat, r.lon, r.hdg + 180, nm * NM);
+      centre.push(C.Cartesian3.fromDegrees(pt.lon, pt.lat, r._h + 3));
+      path.push(C.Cartesian3.fromDegrees(pt.lon, pt.lat, r._h + Math.tan(toRad(GS_DEG)) * (nm * NM + GPI_FT * FT)));
+    }
+    this.aprLines.add({ positions: centre, width: 3, material: C.Material.fromType("PolylineDash", { color: C.Color.WHITE.withAlpha(0.85), dashLength: 20 }) });
+    this.aprLines.add({ positions: path, width: 3, material: C.Material.fromType("Color", { color: C.Color.fromCssColorString("#ff6ef0").withAlpha(0.8) }) });
+  }
+
+  // ILS-style scales: glideslope on the right, localizer at the bottom. The diamonds show where the path is, as on a
+  // real display: high puts the glideslope diamond below centre, right of course puts the localizer diamond left.
+  _hudApproach() {
+    const ap = this._approach;
+    if (!ap) {
+      if (this._aprShown) (this.$.apr.innerHTML = ""), (this.$.aprinfo.innerHTML = ""), (this._aprShown = false);
+      return;
+    }
+    this._aprShown = true;
+    const DOT = 30;
+    const gs = clamp(ap.gsDev / GS_DOT_DEG, -2.6, 2.6), loc = clamp(-ap.locDev / LOC_DOT_DEG, -2.6, 2.6);
+    const mag = "#ff6ef0", dots = [-2, -1, 1, 2];
+    let g = "";
+    // Glideslope scale (x = 170)
+    g += dots.map((k) => `<circle cx="170" cy="${k * DOT}" r="4" fill="none" stroke="#fff" stroke-width="1.6"/>`).join("");
+    g += `<line x1="160" x2="180" y1="0" y2="0" stroke="#fff" stroke-width="2"/>`;
+    g += `<path d="M170,${(gs * DOT - 9).toFixed(1)} L178,${(gs * DOT).toFixed(1)} L170,${(gs * DOT + 9).toFixed(1)} L162,${(gs * DOT).toFixed(1)} Z" fill="${mag}" stroke="#000" stroke-width="1"/>`;
+    // Localizer scale (y = 128)
+    g += dots.map((k) => `<circle cx="${k * DOT}" cy="128" r="4" fill="none" stroke="#fff" stroke-width="1.6"/>`).join("");
+    g += `<line x1="0" x2="0" y1="118" y2="138" stroke="#fff" stroke-width="2"/>`;
+    g += `<path d="M${(loc * DOT - 9).toFixed(1)},128 L${(loc * DOT).toFixed(1)},120 L${(loc * DOT + 9).toFixed(1)},128 L${(loc * DOT).toFixed(1)},136 Z" fill="${mag}" stroke="#000" stroke-width="1"/>`;
+    this.$.apr.innerHTML = g;
+    const dev = ap.above - ap.pathFt;
+    const vert = Math.abs(dev) < 75 ? "on glidepath" : `${fmt(Math.abs(Math.round(dev / 10) * 10))} ft ${dev > 0 ? "high" : "low"}`;
+    const lat = Math.abs(ap.cross) < 0.05 ? "on centreline" : `${fmt(Math.abs(ap.cross), 2)} nm ${ap.locDev > 0 ? "right" : "left"}`;
+    this.$.aprinfo.innerHTML = `APPROACH <b>RWY ${esc(ap.r.id)} ${esc(ap.r.icao)}</b> · ${fmt(ap.along, 1)} nm · ${fmt(Math.max(0, ap.above))} ft above thr (${ap.src}) · ${vert} · ${lat}`;
   }
 
   _drawTraffic(now) {

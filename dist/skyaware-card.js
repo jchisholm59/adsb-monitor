@@ -1183,6 +1183,8 @@ class SkyAwareCard extends HTMLElement {
           this._openCockpit();
         },
         color: (a) => altColor(a.alt_baro),
+        receiver: this._rx,
+        dest: (a) => this._route(a)?.d?.icao,
         onPick: (hex) => this._select(hex),
         onExit: () => this._setTab("map"),
         label: (a) => {
