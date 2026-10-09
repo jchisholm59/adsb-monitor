@@ -101,11 +101,18 @@ Two pieces that work together:
     with an estimated landing time, then "landed", which replaces it on the phone. Type a ticket-style flight
     number (AC612) or a callsign (ACA612), or tap the bell on the Flight tab. If your receiver loses the plane low
     on short final, which is common, it counts as landed 90 s later.
+  - **Every arrival** (off by default; a switch in the Alerts tab): each flight as it **lines up on final** to one of
+    your airport's runways, "🛬 BMA801 on final RWY 32 · YHZ" with type, registration, route, distance, altitude and
+    estimated landing time, then **"landed"**, which replaces it on the phone. "On final" uses the airport's real
+    runways (OurAirports, cached monthly): within 12 nm (adjustable) of a threshold and short of it, tracking within
+    20° of the runway, within 1.5 nm of the extended centreline, below 5,000 ft above it and not climbing, so it fires
+    when the aircraft has rolled out on final, not while it's still manoeuvring. Watched flights are left to their
+    own alerts. Busy airports make a lot of these, so they respect quiet hours.
   - **Overhead**: a military aircraft or helicopter passing within 3 nm alerts again ("RCAF helicopter overhead"),
     even if it already alerted when it was farther out, at most once an hour per aircraft. Not when its first alert
     was already from that close.
   - Alerts include a photo (Planespotters) and route when available. You can set a per-aircraft cooldown (2 h by
-    default) and quiet hours; quiet hours never hold back emergencies or watched flights.
+    default) and quiet hours; quiet hours (which also cover arrivals) never hold back emergencies or watched flights.
 - **Coverage history**: the farthest position per 5° bearing and altitude band, per day (kept 60 days) and all
   time, with the flight that set each record. A position only counts if it agrees with the aircraft's previous one,
   so CPR decoding glitches and MLAT jumps don't inflate your range.

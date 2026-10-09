@@ -3,6 +3,7 @@
 // - Coverage: farthest position per 5° of bearing and altitude band, per day, for the card's polar chart.
 // - Alerts: emergency squawks, military aircraft and helicopters nearby, and watched flights landing at the home
 //   airport, sent to Home Assistant's webhook (an HA automation turns them into sticky phone notifications).
+//   Optionally every arrival: when it's lined up on final to one of the airport's runways, then when it lands.
 // - Proxy: /skyaware/* and /status.json from PiAware with CORS, so the card works over Tailscale.
 // No dependencies. Settings, coverage and the alert log live in data/.
 
@@ -103,6 +104,8 @@ const DEFAULT_SETTINGS = {
   heli: true,
   heliRadius: num('HELI_RADIUS', 10),
   watch: [], // [{callsign, added, label}] alert when landing at `airport`
+  arrivals: false, // every arrival: on final to one of the airport's runways, then landed (watched flights excluded)
+  arrivalsNm: 12, // on final within this distance of the runway threshold
   cooldownHours: num('COOLDOWN_HOURS', 2), // per aircraft, for military/helicopter alerts
   overhead: true, // a military aircraft or helicopter passing right over: alert again despite the cooldown
   overheadRadius: num('OVERHEAD_RADIUS', 3), // nm
@@ -110,6 +113,8 @@ const DEFAULT_SETTINGS = {
   quiet: { enabled: false, start: '23:00', end: '07:00' }, // holds back military/helicopter alerts only
 };
 const AIRPORTS_URL = 'https://davidmegginson.github.io/ourairports-data/airports.csv';
+const RUNWAYS_URL = 'https://davidmegginson.github.io/ourairports-data/runways.csv';
+const RUNWAYS_FILE = path.join(DATA_DIR, 'runways.json');
 const AIRPORT_FILE = path.join(DATA_DIR, 'airport.json');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -218,13 +223,14 @@ async function loadAirport() {
   if (!Number.isFinite(ap.lat) || !Number.isFinite(ap.lon)) return log(`airport ${icao}: no position, set AIRPORT_LAT/AIRPORT_LON`);
   settings.airport = ap;
   log(`airport: ${ap.icao} ${ap.iata} ${ap.name} (${ap.lat}, ${ap.lon}, ${ap.elev} ft)`);
+  loadRunways(ap).catch((e) => log('runway lookup failed:', e.message));
 }
 
 // Accepts a partial settings object from the card; ignores unknown keys and bad values.
 async function updateSettings(p) {
   const s = settings;
-  for (const k of ['squawk', 'military', 'heli', 'overhead']) if (typeof p[k] === 'boolean') s[k] = p[k];
-  for (const k of ['militaryRadius', 'heliRadius', 'cooldownHours', 'overheadRadius', 'overheadMinutes']) {
+  for (const k of ['squawk', 'military', 'heli', 'overhead', 'arrivals']) if (typeof p[k] === 'boolean') s[k] = p[k];
+  for (const k of ['militaryRadius', 'heliRadius', 'cooldownHours', 'overheadRadius', 'overheadMinutes', 'arrivalsNm']) {
     const v = Number(p[k]);
     if (p[k] !== undefined && Number.isFinite(v) && v > 0 && v <= 500) s[k] = v;
   }
@@ -505,6 +511,7 @@ async function checkAlerts(d) {
     }
   }
   await checkWatched(d);
+  await checkArrivals(d);
 }
 
 // Watched flights: "on approach" (within 20 nm of the airport, below 6,000 ft, not climbing), then "landed"
@@ -556,6 +563,113 @@ async function landedAlert(w, st, hex, tag) {
   settings.watch = settings.watch.filter((x) => x.callsign !== w.callsign);
   watchState.delete(w.callsign);
   saveSettings();
+}
+
+// ---- arrivals ----------------------------------------------------------------
+// The home airport's runway ends from OurAirports (cached in data/runways.json, refreshed monthly): threshold
+// position (after any displacement), elevation and the true bearing towards the far end.
+let runways = [];
+function destPt(lat, lon, brg, m) {
+  const d = m / 6371008.8, b = brg * RAD, p1 = lat * RAD, l1 = lon * RAD;
+  const p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(b));
+  const l2 = l1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2));
+  return { lat: p2 / RAD, lon: (((l2 / RAD) + 540) % 360) - 180 };
+}
+async function loadRunways(ap) {
+  const c = readJson(RUNWAYS_FILE, null);
+  if (c && c.icao === ap.icao && Date.now() - c.at < 30 * 86400_000) return void (runways = c.ends);
+  const r = await fetchT(RUNWAYS_URL, {}, 60_000);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const rl = readline.createInterface({ input: require('stream').Readable.fromWeb(r.body), crlfDelay: Infinity });
+  let cols = null;
+  const ends = [];
+  for await (const line of rl) {
+    const f = (line.match(/("([^"]|"")*"|[^,]*)(,|$)/g) || []).map((x) => x.replace(/,$/, '').replace(/^"|"$/g, '').replace(/""/g, '"'));
+    if (!cols) {
+      cols = f;
+      continue;
+    }
+    const row = Object.fromEntries(cols.map((k, i) => [k, f[i]]));
+    if (row.airport_ident !== ap.icao || row.closed === '1') continue;
+    const E = (k) => ({ id: row[k + '_ident'], lat: Number(row[k + '_latitude_deg']), lon: Number(row[k + '_longitude_deg']),
+      elev: Number(row[k + '_elevation_ft']), disp: Number(row[k + '_displaced_threshold_ft']) || 0 });
+    const le = E('le'), he = E('he');
+    if (![le.lat, le.lon, he.lat, he.lon].every(Number.isFinite) || !row.le_latitude_deg || !row.he_latitude_deg) continue;
+    for (const [a, b] of [[le, he], [he, le]]) {
+      const hdg = bearing(a.lat, a.lon, b.lat, b.lon);
+      const t = a.disp > 0 ? destPt(a.lat, a.lon, hdg, a.disp * 0.3048) : a;
+      ends.push({ id: a.id, lat: t.lat, lon: t.lon, elev: Number.isFinite(a.elev) ? a.elev : ap.elev, hdg });
+    }
+  }
+  runways = ends;
+  writeJson(RUNWAYS_FILE, { icao: ap.icao, at: Date.now(), ends });
+  log(`runways: ${ap.icao} ${ends.map((e) => e.id).join(' ')}`);
+}
+
+// Lined up on final: within arrivalsNm of a threshold and short of it, tracking within 20° of the runway, within
+// 1.5 nm of the extended centreline, below 5,000 ft above the threshold (baro, corrected with the reported QNH) and
+// not climbing. Returns the runway end and the distance to it, or null.
+function onFinal(a) {
+  if (typeof a.alt_baro !== 'number' || a.lat === undefined || a.track === undefined || vrate(a) > 200) return null;
+  const above = a.alt_baro + (Number.isFinite(a.nav_qnh) ? (a.nav_qnh - 1013.25) * 27 : 0);
+  let best = null;
+  for (const r of runways) {
+    const d = dist(r.lat, r.lon, a.lat, a.lon);
+    if (d > settings.arrivalsNm || above - r.elev > 5000) continue;
+    if (Math.abs(((a.track - r.hdg + 540) % 360) - 180) > 20) continue;
+    const off = (((bearing(r.lat, r.lon, a.lat, a.lon) - r.hdg - 180 + 540) % 360) - 180) * RAD;
+    const along = d * Math.cos(off), cross = Math.abs(d * Math.sin(off));
+    if (along < 0.3 || cross > 1.5) continue;
+    if (!best || cross < best.cross) best = { r, along, cross };
+  }
+  return best;
+}
+
+const arrivals = new Map(); // hex -> {final, rwy, cs, tag, last: {t, alt, d}}
+async function checkArrivals(d) {
+  const s = settings, ap = s.airport;
+  if (!s.arrivals || !ap || !runways.length) return;
+  const now = Date.now(), quiet = inQuiet();
+  const watched = new Set(s.watch.map((w) => w.callsign));
+  for (const a of d.aircraft) {
+    if (a.lat === undefined || a.seen_pos > 30 || watched.has(callsign(a))) continue;
+    let st = arrivals.get(a.hex);
+    const da = dist(a.lat, a.lon, ap.lat, ap.lon);
+    if (st) st.last = { t: now, alt: a.alt_baro, d: da };
+    if (!st) {
+      const f = onFinal(a);
+      if (!f) continue;
+      st = { final: now, rwy: f.r.id, cs: callsign(a) || a.hex.toUpperCase(), tag: `adsb-arrival-${a.hex}`, last: { t: now, alt: a.alt_baro, d: da } };
+      arrivals.set(a.hex, st);
+      if (quiet) continue; // still tracked, so it isn't alerted later on short final
+      const [info, route, image] = await Promise.all([describe(a), routeOf(a), photoOf(a.hex)]);
+      st.image = image; // kept for the landed alert, which replaces this one
+      const who = [info.type, info.reg && info.reg !== st.cs ? info.reg : '', route].filter(Boolean).join(' · ');
+      const mins = a.gs > 60 ? Math.max(1, Math.round((f.along / a.gs) * 60)) : null;
+      await send({
+        kind: 'arrival', hex: a.hex, callsign: st.cs, priority: 'normal', image, tag: st.tag,
+        title: `🛬 ${st.cs} on final RWY ${f.r.id} · ${ap.iata || ap.icao}`,
+        message: `${who ? who + '\n' : ''}${f.along.toFixed(1)} nm out, ${fmtAlt(a.alt_baro)}${mins ? `, landing ≈ ${hhmm(now + mins * 60000)}` : ''}`,
+      });
+      continue;
+    }
+    if (!st.done && ((a.alt_baro === 'ground' && da <= 5) || (typeof a.alt_baro === 'number' && a.alt_baro <= ap.elev + 300 && da <= 4))) await arrivalLanded(a.hex, st, quiet);
+  }
+  for (const [hex, st] of arrivals) {
+    // Gone below the receiver's horizon on short final: count it as landed.
+    if (!st.done && now - st.last.t > 90_000 && st.last.d <= 10 && (st.last.alt === 'ground' || st.last.alt < 3000)) await arrivalLanded(hex, st, quiet);
+    if (now - st.final > 2 * 3600_000) arrivals.delete(hex); // go-arounds and diversions age out
+  }
+}
+async function arrivalLanded(hex, st, quiet) {
+  st.done = Date.now();
+  if (quiet) return;
+  const ap = settings.airport;
+  await send({
+    kind: 'arrival', hex, callsign: st.cs, priority: 'normal', tag: st.tag, image: st.image || (await photoOf(hex)),
+    title: `✅ ${st.cs} landed at ${ap.iata || ap.icao} · RWY ${st.rwy}`,
+    message: `Landed at ${ap.name} at ${hhmm(st.last?.t || Date.now())}`,
+  });
 }
 
 // ---- polling ---------------------------------------------------------------
