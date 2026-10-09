@@ -1173,10 +1173,15 @@ class SkyAwareCard extends HTMLElement {
     this._cockpitLoading = true;
     try {
       const here = new URL(import.meta.url);
-      const mod = await import(new URL("./skyaware-cockpit.js" + here.search, here).href);
+      const [mod, token] = await Promise.all([import(new URL("./skyaware-cockpit.js" + here.search, here).href), this._cesiumToken()]);
       if (this._tab !== "cockpit" || !this.isConnected) return;
       this._cockpit = new mod.Cockpit(this.$("cockpit"), {
-        token: this._config.cesium_token,
+        token,
+        saveToken: async (t) => {
+          await this._saveCesiumToken(t);
+          this._closeCockpit();
+          this._openCockpit();
+        },
         color: (a) => altColor(a.alt_baro),
         onPick: (hex) => this._select(hex),
         onExit: () => this._setTab("map"),
@@ -1192,6 +1197,30 @@ class SkyAwareCard extends HTMLElement {
       this.$("cockpit").innerHTML = `<div class="muted" style="padding:30px;text-align:center">Couldn't load the cockpit view: ${esc(e.message || e)}</div>`;
     } finally {
       this._cockpitLoading = false;
+    }
+  }
+
+  // Cesium token: the card config's cesium_token, else the one pasted into the Cockpit tab, kept in the HA user's
+  // profile (frontend user data, so every device signed in as that user has it), else in this browser.
+  async _cesiumToken() {
+    if (this._config.cesium_token) return this._config.cesium_token;
+    try {
+      const r = await this._hass?.callWS({ type: "frontend/get_user_data", key: "skyaware-card" });
+      if (r?.value?.cesium_token) return r.value.cesium_token;
+    } catch (e) {}
+    try {
+      return localStorage.getItem("skyaware-card:cesium_token") || "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  async _saveCesiumToken(t) {
+    try {
+      const r = await this._hass.callWS({ type: "frontend/get_user_data", key: "skyaware-card" });
+      await this._hass.callWS({ type: "frontend/set_user_data", key: "skyaware-card", value: { ...(r?.value || {}), cesium_token: t } });
+    } catch (e) {
+      localStorage.setItem("skyaware-card:cesium_token", t); // no HA connection (e.g. a test page): this browser only
     }
   }
 

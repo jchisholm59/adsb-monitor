@@ -113,12 +113,17 @@ const STYLE = `
   .ck .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; line-height: 1.5; background: #0b1020; }
   .ck .msg > div { max-width: 560px; text-align: left; }
   .ck .msg ol { margin: 8px 0 0; padding-left: 22px; } .ck .msg li { margin: 4px 0; }
+  .ck .msg form { display: flex; gap: 6px; margin-top: 12px; }
+  .ck .msg input { flex: 1; min-width: 0; font: inherit; color: inherit; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.3); border-radius: 8px; padding: 7px 10px; }
+  .ck .msg button { font: inherit; color: #fff; background: var(--primary-color, #03a9f4); border: 0; border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+  .ck .msg button:disabled { opacity: .6; }
+  .ck .msg .note { font-size: .85em; opacity: .8; margin-top: 8px; }
   .ck .msg code { background: rgba(255,255,255,.12); padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
   .ck .msg:empty { display: none; }
 `;
 
 export class Cockpit {
-  // opts: { token, color(a) -> css colour, onPick(hex), onExit(), label(a) -> {cs, sub} }
+  // opts: { token, saveToken(token) -> Promise, color(a) -> css colour, onPick(hex), onExit(), label(a) -> {cs, sub} }
   constructor(container, opts) {
     this.el = container;
     this.opts = opts;
@@ -179,10 +184,7 @@ export class Cockpit {
   async start() {
     const token = String(this.opts.token || "").trim();
     if (!token) {
-      this.$.msg.innerHTML = `<div><b>The cockpit view needs a Cesium ion token.</b><ol>
-        <li>Create one at <a href="https://ion.cesium.com/tokens" target="_blank" rel="noreferrer" style="color:inherit">ion.cesium.com/tokens</a>
-          with only the <code>assets:read</code> scope, its Allowed URLs limited to your Home Assistant addresses.</li>
-        <li>Add <code>cesium_token: &lt;token&gt;</code> to this card's YAML, save, and reload the page.</li></ol></div>`;
+      this._askToken("<b>The cockpit view needs a Cesium ion token.</b>");
       return;
     }
     let C;
@@ -231,9 +233,9 @@ export class Cockpit {
         this._note = "Google 3D tiles unavailable on this token: showing terrain";
       } catch (e2) {
         const m = String(e2?.message || e?.message || e2 || e);
-        this.$.msg.innerHTML = /401|403|Invalid access token|Unauthorized/i.test(m)
-          ? `<div>Cesium ion refused the token. Check it's pasted correctly and that its Allowed URLs include <code>${esc(location.origin)}</code>.</div>`
-          : `<div>Couldn't load the 3D world: ${esc(m)}</div>`;
+        if (/401|403|Invalid access token|Unauthorized/i.test(m))
+          this._askToken(`<b>Cesium ion refused the token.</b> Check it was copied whole, and that its Allowed URLs include <code>${esc(location.origin)}</code>, or paste another.`);
+        else this.$.msg.innerHTML = `<div>Couldn't load the 3D world: ${esc(m)}</div>`;
         return;
       }
     }
@@ -245,6 +247,36 @@ export class Cockpit {
     this._initInput();
     this._last = performance.now();
     this._removePre = scene.preUpdate.addEventListener(() => this._frame());
+  }
+
+  // The paste-a-token form. The card saves it to the HA user's profile (or the browser) and reopens the view.
+  _askToken(intro) {
+    const canSave = typeof this.opts.saveToken === "function";
+    this.$.msg.innerHTML = `<div>${intro}<ol>
+        <li>Create one at <a href="https://ion.cesium.com/tokens" target="_blank" rel="noreferrer" style="color:inherit">ion.cesium.com/tokens</a>
+          with only the <code>assets:read</code> scope, its Allowed URLs limited to your Home Assistant addresses.</li>
+        <li>${canSave ? "Paste it here:" : "Add <code>cesium_token: &lt;token&gt;</code> to this card's YAML."}</li></ol>
+      ${canSave ? `<form><input type="password" placeholder="Cesium ion token" autocomplete="off" spellcheck="false"><button type="submit">Save</button></form>
+        <div class="note">Saved to your Home Assistant profile, so it works on every device you're signed in on.</div>` : ""}</div>`;
+    const form = this.$.msg.querySelector("form");
+    if (!form) return;
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const t = form.querySelector("input").value.trim();
+      if (!t) return;
+      const btn = form.querySelector("button");
+      btn.disabled = true;
+      btn.textContent = "Saving…";
+      try {
+        await this.opts.saveToken(t);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = "Save";
+        this.$.msg.querySelector(".note").textContent = "Couldn't save it: " + (err?.message || err);
+      }
+    });
+    // Keep HA's keyboard shortcuts out of the box.
+    form.addEventListener("keydown", (e) => e.stopPropagation());
   }
 
   _initInput() {

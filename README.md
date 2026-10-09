@@ -165,7 +165,7 @@ downloaded aircraft database (~8 MB, refreshed weekly) and your airport.
    monitor:                           # adsb-monitor (optional, for Coverage / Alerts)
      - http://192.168.1.20:7100
      - http://100.64.0.10:7100
-   cesium_token: eyJ...               # optional, for the Cockpit tab: a Cesium ion token (ion.cesium.com/tokens)
+   cesium_token: eyJ...               # optional: or just paste the token into the Cockpit tab (saved to your HA profile)
    ```
    For the Cockpit tab, create the token with only the `assets:read` scope and restrict its *Allowed URLs* to your
    Home Assistant addresses: anyone who can open the dashboard can read it. CesiumJS (several MB) comes from Cesium's
