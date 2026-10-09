@@ -467,11 +467,17 @@ export class Cockpit {
     return { pos: C.Cartesian3.fromDegrees(lon, lat, h ?? 0, C.Ellipsoid.WGS84, out), lat, lon, h, gs, trk, stale, age, onGround: h == null };
   }
 
-  _groundAt(lat, lon) {
-    const C = this.C;
+  // Surface height (ellipsoid metres) at a point, from the 3D tiles at full detail. scene.sampleHeight() reads
+  // whatever coarse tiles happen to be loaded and can be off by kilometres away from the camera (it put CYHZ's
+  // runway 32 threshold at 4,339 m), so this waits for the detailed tiles instead. Async; null when unknown.
+  async _groundAt(lat, lon) {
+    const C = this.C, scene = this.w?.scene;
+    if (!scene) return null;
+    const exclude = [this.points, this.labels, this.aprLines, this.bbs].filter(Boolean);
     try {
-      const exclude = this.points ? [this.points, this.labels, this.aprLines, this.bbs].filter(Boolean) : [];
-      const h = this.w.scene.sampleHeight(C.Cartographic.fromDegrees(lon, lat), exclude);
+      const pos = [C.Cartographic.fromDegrees(lon, lat)];
+      const out = this.tiles ? await scene.sampleHeightMostDetailed(pos, exclude) : await C.sampleTerrainMostDetailed(scene.terrainProvider, pos);
+      const h = out?.[0]?.height;
       return fin(h) ? h : null;
     } catch (e) {
       return null;
@@ -493,11 +499,16 @@ export class Cockpit {
     }
     const a = entry.a;
     const p = this._project(entry, now, this._tmp || (this._tmp = new C.Cartesian3()));
-    // Ground: aircraft on the ground (or with no altitude) sit 3 m above the sampled surface.
-    if (p.onGround || (now - (this._groundMs || 0) > 500)) {
+    // Ground: aircraft on the ground (or with no altitude) sit 3 m above the sampled surface. Sampled once a second
+    // (async); a sample above a flying aircraft is junk (the ground can't be over it) and is ignored.
+    if (!this._groundBusy && now - (this._groundMs || 0) > 1000) {
       this._groundMs = now;
-      const g = this._groundAt(p.lat, p.lon);
-      if (g != null) this._ground = g;
+      this._groundBusy = true;
+      const h = p.h, air = !p.onGround;
+      this._groundAt(p.lat, p.lon).then((g) => {
+        this._groundBusy = false;
+        if (g != null && g < 9000 && !(air && h != null && g > h + 30)) this._ground = g;
+      });
     }
     if (p.onGround) {
       const h = (this._ground ?? 0) + 3;
@@ -583,12 +594,18 @@ export class Cockpit {
   // ---- approach mode ---------------------------------------------------------------------------
 
   // Height of a threshold above the ellipsoid, from the rendered 3D surface (retried until the tiles are there).
+  // Kept only if it's within 120 m of the published elevation (the geoid is within ~100 m of the ellipsoid
+  // everywhere); otherwise the approach uses barometric altitude instead.
   _thresholdHeight(r, now) {
-    if (r._h != null || now - (r._hTry || 0) < 2000) return r._h ?? null;
+    if (r._h != null || r._busy || now - (r._hTry || 0) < 10000) return r._h ?? null;
     r._hTry = now;
-    const g = this._groundAt(r.lat, r.lon);
-    if (g != null) r._h = g;
-    return r._h ?? null;
+    r._busy = true;
+    this._groundAt(r.lat, r.lon).then((g) => {
+      r._busy = false;
+      if (g != null && Math.abs(g - r.elev * FT) < 120) r._h = g;
+      else if (g != null) console.warn(`skyaware-cockpit: ${r.icao} ${r.id} surface sample ${g.toFixed(0)} m vs elevation ${(r.elev * FT).toFixed(0)} m, ignored`);
+    });
+    return null;
   }
 
   // The runway end this aircraft is approaching, if any: within 15 nm of the threshold and short of it, tracking
