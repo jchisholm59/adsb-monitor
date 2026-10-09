@@ -25,6 +25,8 @@ Two pieces that work together:
 
 ![Cockpit tab: Delta 113, Rome to Boston, an A330-300 at 36,000 ft coming in over the Nova Scotia coast on Google's photorealistic 3D tiles, with JetBlue 2260 ahead and the HUD's heading tape, ground speed and altitude](docs/cockpit.jpg)
 
+![Chase view: WestJet 668, Calgary to Halifax on a 737 MAX 8, at 2,625 ft and 151 kt on final, with Halifax Stanfield's runways on the horizon](docs/chase.jpg)
+
 | Map filter | Jump to aircraft (from the list's 📍) |
 |---|---|
 | ![Map filter: chosen classes and airlines only, with counts and logos](docs/map-filter.png) | ![The map centred and zoomed on an aircraft picked from the Aircraft list](docs/locate.png) |
@@ -70,7 +72,7 @@ Two pieces that work together:
   sends one, else from its turn rate). Between reports it flies on at the reported speed and eases onto each new fix,
   so the view never jumps. Other traffic shows as altitude-coloured points with callsign and altitude. A HUD with
   callsign, route, type and registration, a heading tape, ground speed, altitude and vertical speed. Drag to look
-  around, wheel to zoom, **Chase view** for a camera behind the aircraft, ◀ ▶ to hop between aircraft. Needs a free
+  around, wheel to zoom, **Chase view** to follow it from behind (the silhouette banks with it), ◀ ▶ to hop between aircraft. Needs a free
   [Cesium ion](https://ion.cesium.com/) token: paste it into the tab once (it's saved to your Home Assistant profile).
   Wants a decent GPU; fine on desktops and phones.
 - **Coverage**: polar chart of the farthest position heard in each 5° of bearing, for three altitude bands, over

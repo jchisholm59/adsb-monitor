@@ -29,6 +29,17 @@ const VIEW_PITCH_DEG = -4;
 const STALE_S = 60; // extrapolate up to this; older positions are held, not extrapolated
 const NOTE_S = 30; // say how old the position is after this
 const LOST_S = 120;
+const CHASE_BACK_M = 220;
+const CHASE_UP_M = 45;
+// The chased aircraft from behind: fuselage, wings with a little dihedral, tailplane and fin.
+const REAR_SVG = "data:image/svg+xml;base64," + btoa(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -30 120 60">
+  <g fill="#e8edf5" stroke="#1b2430" stroke-width="2" stroke-linejoin="round">
+    <path d="M-58,4 L-8,-1 L8,-1 L58,4 L58,7 L8,5 L-8,5 L-58,7 Z"/>
+    <path d="M-22,-12 L-3,-14 L3,-14 L22,-12 L22,-10 L3,-11 L-3,-11 L-22,-10 Z"/>
+    <path d="M-2.5,-28 L2.5,-28 L3,-12 L-3,-12 Z"/>
+    <circle cx="0" cy="2" r="8"/>
+    <circle cx="-22" cy="9" r="3.6"/><circle cx="22" cy="9" r="3.6"/>
+  </g></svg>`);
 
 let cesiumLoading = null;
 
@@ -242,6 +253,8 @@ export class Cockpit {
     }
     if (this.destroyed) return;
     this.points = scene.primitives.add(new C.PointPrimitiveCollection());
+    this.bbs = scene.primitives.add(new C.BillboardCollection({ scene }));
+    this.chaseBb = this.bbs.add({ image: REAR_SVG, width: 132, height: 66, show: false });
     this.labels = scene.primitives.add(new C.LabelCollection());
     this.marks = new Map(); // hex -> { pt, lb }
     this.$.msg.textContent = "";
@@ -367,6 +380,7 @@ export class Cockpit {
     this._drawTraffic(now);
     const entry = this.sel && this.acs.get(this.sel);
     if (!entry) {
+      if (this.chaseBb) this.chaseBb.show = false;
       this.$.status.textContent = this.sel ? "Aircraft out of range" : "Pick an aircraft on the map, or use ◀ ▶";
       this._hud(null);
       return;
@@ -418,7 +432,7 @@ export class Cockpit {
     const hr = C.Math.toRadians(this.heading);
     const off = this.mode === "cockpit"
       ? new C.Cartesian3(Math.sin(hr) * FORWARD_OFFSET_M, Math.cos(hr) * FORWARD_OFFSET_M, UP_OFFSET_M)
-      : new C.Cartesian3(-Math.sin(hr) * 90, -Math.cos(hr) * 90, 28);
+      : new C.Cartesian3(-Math.sin(hr) * CHASE_BACK_M, -Math.cos(hr) * CHASE_BACK_M, CHASE_UP_M);
     const cam = C.Matrix4.multiplyByPoint(enu, off, new C.Cartesian3());
     // Never below the surface (+ clearance).
     const cc = C.Cartographic.fromCartesian(cam);
@@ -426,7 +440,15 @@ export class Cockpit {
       cc.height = this._ground + (p.onGround ? 2 : MIN_CLEARANCE_M);
       C.Cartographic.toCartesian(cc, C.Ellipsoid.WGS84, cam);
     }
-    const pitch = (this.mode === "cockpit" ? VIEW_PITCH_DEG + this.fpa : -14) + this.look.pitch;
+    const chasePitch = (-Math.atan2(CHASE_UP_M, CHASE_BACK_M) * 180) / Math.PI; // aimed straight at the aircraft
+    const pitch = (this.mode === "cockpit" ? VIEW_PITCH_DEG + this.fpa : chasePitch) + this.look.pitch;
+    // The chased aircraft is drawn where the camera follows (the smoothed anchor), banked like it.
+    this.chaseBb.show = this.mode === "chase";
+    this.el.querySelector(".bore").style.display = this.mode === "chase" ? "none" : "";
+    if (this.mode === "chase") {
+      this.chaseBb.position = this.anchor;
+      this.chaseBb.rotation = C.Math.toRadians(-(this.bank || 0));
+    }
     this.w.camera.frustum.fov = C.Math.toRadians(this.fov);
     this.w.camera.setView({
       destination: cam,
@@ -450,7 +472,7 @@ export class Cockpit {
     const keep = new Set();
     for (const [hex, entry] of this.acs) {
       const isSel = hex === this.sel;
-      if (isSel && this.mode === "cockpit") continue; // we're sitting in it
+      if (isSel) continue; // cockpit: we're in it; chase: drawn as the silhouette at the camera's anchor
       const p = this._project(entry, now, new C.Cartesian3());
       if (p.onGround) continue;
       keep.add(hex);
