@@ -26,8 +26,9 @@ const FORWARD_OFFSET_M = 7;
 const UP_OFFSET_M = 2.6;
 const MIN_CLEARANCE_M = 12;
 const VIEW_PITCH_DEG = -4;
-const STALE_S = 15; // position older than this: hold, don't extrapolate
-const LOST_S = 60;
+const STALE_S = 60; // extrapolate up to this; older positions are held, not extrapolated
+const NOTE_S = 30; // say how old the position is after this
+const LOST_S = 120;
 
 let cesiumLoading = null;
 
@@ -436,7 +437,8 @@ export class Cockpit {
       },
     });
     const age = (now - entry.recvMs) / 1000;
-    this.$.status.textContent = age > LOST_S ? "Signal lost: holding last position" : p.stale ? "Waiting for a position update…" : this._note || "";
+    this.$.status.textContent = age > LOST_S ? "Signal lost: holding last position"
+      : age > NOTE_S ? `Last position ${Math.round(age)} s ago${p.stale ? ": holding" : ": estimating"}` : this._note || "";
     if (now - (this._hudMs || 0) > 100) {
       this._hudMs = now;
       this._hud(a, p);
@@ -458,7 +460,7 @@ export class Cockpit {
           pt: this.points.add({ pixelSize: 9, outlineColor: C.Color.BLACK, outlineWidth: 1.5 }),
           lb: this.labels.add({ font: "13px sans-serif", fillColor: C.Color.WHITE, outlineColor: C.Color.BLACK, outlineWidth: 3,
             style: C.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new C.Cartesian2(10, -10), horizontalOrigin: C.HorizontalOrigin.LEFT,
-            distanceDisplayCondition: new C.DistanceDisplayCondition(0, 120000) }),
+            distanceDisplayCondition: new C.DistanceDisplayCondition(0, 400000) }),
         };
         this.marks.set(hex, m);
       }
@@ -505,7 +507,7 @@ export class Cockpit {
       const v = norm360(d);
       const big = v % 30 === 0;
       g += `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${big ? 16 : 21}" y2="28" stroke="#fff" stroke-width="${big ? 1.6 : 1}"/>`;
-      if (big) g += `<text x="${x.toFixed(1)}" y="12" fill="#fff" font-size="11" text-anchor="middle">${({ 0: "N", 90: "E", 180: "S", 270: "W" })[v] ?? String(v / 10).padStart(2, "0")}</text>`;
+      if (big && Math.abs(x) > 30) g += `<text x="${x.toFixed(1)}" y="12" fill="#fff" font-size="11" text-anchor="middle">${({ 0: "N", 90: "E", 180: "S", 270: "W" })[v] ?? String(v / 10).padStart(2, "0")}</text>`;
     }
     g += `<path d="M-6,34L0,28L6,34" fill="#7CFC9A"/><text x="0" y="12" dy="-0" fill="none"></text>`;
     g += `<rect x="-20" y="-1" width="40" height="15" rx="3" fill="rgba(0,0,0,.55)" stroke="#7CFC9A"/><text x="0" y="11" fill="#7CFC9A" font-size="12" text-anchor="middle">${String(Math.round(hdg) % 360).padStart(3, "0")}</text>`;
