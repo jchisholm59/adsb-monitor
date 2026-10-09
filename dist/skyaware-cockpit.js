@@ -136,7 +136,7 @@ function csvRow(line) {
 // flat, flon (the far end) }.
 async function loadRunways(rx) {
   if (!rx || !fin(rx.lat) || !fin(rx.lon)) return [];
-  const KEY = "skyaware-card:runways";
+  const KEY = "skyaware-card:runways2"; // 2: headings from the end coordinates
   try {
     const c = JSON.parse(localStorage.getItem(KEY) || "null");
     if (c && Date.now() - c.at < 30 * 86400000 && distNm(c.lat, c.lon, rx.lat, rx.lon) < 20) return c.ends;
@@ -158,7 +158,8 @@ async function loadRunways(rx) {
     if (![le.lat, le.lon, he.lat, he.lon].every(fin)) continue;
     if (distNm(rx.lat, rx.lon, le.lat, le.lon) > RUNWAY_RANGE_NM) continue;
     for (const [a, b] of [[le, he], [he, le]]) {
-      const hdg = fin(a.hdg) ? a.hdg : brgDeg(a.lat, a.lon, b.lat, b.lon);
+      // The true bearing between the ends: OurAirports' listed heading is rounded to whole degrees.
+      const hdg = brgDeg(a.lat, a.lon, b.lat, b.lon);
       const t = a.disp > 0 ? destPt(a.lat, a.lon, hdg, a.disp * FT) : a;
       const elev = fin(a.elev) ? a.elev : b.elev;
       if (!fin(elev)) continue;
@@ -288,6 +289,16 @@ export class Cockpit {
   }
 
   async start() {
+    // Runways for approach mode, while the 3D world loads.
+    this.runways = [];
+    if (!this.opts.receiver) this._rwyErr = "receiver position unknown";
+    else loadRunways(this.opts.receiver).then((r) => {
+      this.runways = r || [];
+      if (!this.runways.length) this._rwyErr = "no runways found near the receiver";
+    }, (e) => {
+      this._rwyErr = e?.message || String(e);
+      console.warn("skyaware-cockpit: runway data", e);
+    });
     const token = String(this.opts.token || "").trim();
     if (!token) {
       this._askToken("<b>The cockpit view needs a Cesium ion token.</b>");
@@ -352,8 +363,6 @@ export class Cockpit {
     this.labels = scene.primitives.add(new C.LabelCollection());
     this.marks = new Map(); // hex -> { pt, lb }
     this.aprLines = scene.primitives.add(new C.PolylineCollection());
-    this.runways = [];
-    loadRunways(this.opts.receiver).then((r) => (this.runways = r || []), (e) => console.warn("skyaware-cockpit: runway data", e));
     this.$.msg.textContent = "";
     this._initInput();
     this._last = performance.now();
@@ -557,7 +566,8 @@ export class Cockpit {
     });
     const age = (now - entry.recvMs) / 1000;
     this.$.status.textContent = age > LOST_S ? "Signal lost: holding last position"
-      : age > NOTE_S ? `Last position ${Math.round(age)} s ago${p.stale ? ": holding" : ": estimating"}` : this._note || "";
+      : age > NOTE_S ? `Last position ${Math.round(age)} s ago${p.stale ? ": holding" : ": estimating"}`
+      : this._note || (this._rwyErr ? `Approach mode off: ${this._rwyErr}` : "");
     if (now - (this._aprMs || 0) > 500) {
       this._aprMs = now;
       this._approach = this._findApproach(a, p, now);
@@ -585,7 +595,7 @@ export class Cockpit {
   // within 25° of the runway, within 2 nm of the extended centreline, below ~6,000 ft above the threshold and not
   // climbing. Prefers the flight's destination. The current runway is kept on looser limits (no flicker).
   _findApproach(a, p, now) {
-    if (p.onGround || !this.runways.length) return null;
+    if (p.onGround || !this.runways?.length) return null;
     const fpm = fin(a.geom_rate) ? a.geom_rate : fin(a.baro_rate) ? a.baro_rate : 0;
     if (fpm > 500) return null;
     const dest = this.opts.dest?.(a);
