@@ -7,7 +7,10 @@
 // The ETA is an estimate: great-circle distance to go / current ground speed.
 // Coverage history, phone alerts (squawks, military, helicopters, watched flights landing) and a CORS proxy for use
 // over a VPN come from adsb-monitor (https://github.com/jchisholm59/adsb-monitor), a small always-on service.
-// Install: copy to /config/www/ha-cards/, add /local/ha-cards/skyaware-card.js as a JavaScript module resource.
+// Cockpit tab: the selected aircraft's view over Google's photorealistic 3D world (skyaware-cockpit.js, CesiumJS from
+// Cesium's CDN, loaded only when the tab opens). Needs `cesium_token` (a Cesium ion token, scope assets:read).
+// Install: copy to /config/www/ha-cards/, add /local/ha-cards/skyaware-card.js as a JavaScript module resource
+// (skyaware-cockpit.js goes next to it; it isn't a resource of its own).
 
 const DEFAULTS = {
   title: "Planes",
@@ -19,6 +22,7 @@ const DEFAULTS = {
   trail_minutes: 30,
   lookups: true, // routes / aircraft details / photos from the internet
   markers: true, // landmarks on the map: true (built-in), false, or a list of {name, lat, lon, sub, note} to add
+  cesium_token: "", // Cesium ion token for the Cockpit tab (assets:read; restrict its Allowed URLs to your HA addresses)
 };
 
 // Built-in landmarks, drawn on the map; tap one for its note.
@@ -40,7 +44,7 @@ const LANDMARKS = [
 const NM = 3440.065; // earth radius, nm
 const RAD = Math.PI / 180;
 const TABS = [["map", "Map", "mdi:map"], ["list", "Aircraft", "mdi:format-list-bulleted"], ["flight", "Flight", "mdi:airplane"],
-  ["coverage", "Coverage", "mdi:radar"], ["alerts", "Alerts", "mdi:bell-ring-outline"], ["skyaware", "SkyAware", "mdi:web"]];
+  ["cockpit", "Cockpit", "mdi:airplane-takeoff"], ["coverage", "Coverage", "mdi:radar"], ["alerts", "Alerts", "mdi:bell-ring-outline"], ["skyaware", "SkyAware", "mdi:web"]];
 // Coverage altitude bands (as adsb-monitor records them), coloured like the map's altitude scale.
 const BANDS = [["high", "Above 25,000 ft", 35000], ["mid", "10,000–25,000 ft", 15000], ["low", "Below 10,000 ft", 1500]];
 const RANGES = [["1", "Today"], ["7", "7 days"], ["30", "30 days"], ["all", "All time"]];
@@ -291,6 +295,7 @@ class SkyAwareCard extends HTMLElement {
       }
     };
     this._tab = get("tab", "map");
+    if (this._tab === "cockpit") this._tab = "map"; // Cesium only loads when asked for
     this._labels = get("labels", "1") === "1";
     this._sat = get("sat", "0") === "1"; // satellite basemap
     this._trailsAll = get("trails", "1") === "1";
@@ -340,6 +345,7 @@ class SkyAwareCard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._closeCockpit();
     for (const t of this._timers || []) clearInterval(t);
     this._timers = [];
     if (this._ro) this._ro.disconnect();
@@ -574,6 +580,7 @@ class SkyAwareCard extends HTMLElement {
       this._selSeenAt = d.now - (this._selLast.seen || 0);
     }
     if (this._follow && this._selLast?.lat !== undefined && this._byHex.has(this._sel)) this._centerOn(this._selLast, false);
+    this._cockpit?.setData(d.aircraft, this._sel);
     this._renderAll();
   }
 
@@ -978,6 +985,8 @@ class SkyAwareCard extends HTMLElement {
 
         <div class="pane" id="p-flight"><div id="flight"></div></div>
 
+        <div class="pane" id="p-cockpit"><div id="cockpit"></div></div>
+
         <div class="pane" id="p-coverage"><div id="cov"></div></div>
 
         <div class="pane" id="p-alerts"><div id="alerts"></div></div>
@@ -1080,6 +1089,7 @@ class SkyAwareCard extends HTMLElement {
       if (!a) return;
       const act = a.dataset.act;
       if (act === "details") this._setTab("flight");
+      else if (act === "cockpit") this._setTab("cockpit");
       else if (act === "close") this._select(null);
       else if (act === "follow") {
         this._follow = !this._follow;
@@ -1115,7 +1125,9 @@ class SkyAwareCard extends HTMLElement {
   _setTab(t) {
     if (!TABS.some(([k]) => k === t)) t = "map";
     this._tab = t;
-    this._save("tab", t);
+    if (t !== "cockpit") this._save("tab", t);
+    if (t === "cockpit") this._openCockpit();
+    else this._closeCockpit();
     for (const b of this.$("tabs").querySelectorAll("button")) b.classList.toggle("on", b.dataset.t === t);
     for (const [k] of TABS) this.$("p-" + k).classList.toggle("on", k === t);
     if (t === "skyaware" && !this.$("sa").firstChild) {
@@ -1145,7 +1157,48 @@ class SkyAwareCard extends HTMLElement {
     this._selLast = hex ? this._byHex?.get(hex) || null : null;
     if (this._selLast) this._selSeenAt = (this._now || 0) - (this._selLast.seen || 0);
     if (!hex) this._follow = false;
+    this._cockpit?.setData(this._acs, this._sel);
     this._renderAll();
+  }
+
+  // ---- cockpit ---------------------------------------------------------------------------------
+
+  async _openCockpit() {
+    if (this._cockpit || this._cockpitLoading) return;
+    // Nothing selected: the nearest airborne aircraft with a position.
+    if (!this._sel || !this._byHex?.has(this._sel)) {
+      const near = this._acs.filter((a) => a.lat !== undefined && a.alt_baro !== "ground").sort((p, q) => (p._dist ?? 1e9) - (q._dist ?? 1e9))[0];
+      if (near) this._select(near.hex);
+    }
+    this._cockpitLoading = true;
+    try {
+      const here = new URL(import.meta.url);
+      const mod = await import(new URL("./skyaware-cockpit.js" + here.search, here).href);
+      if (this._tab !== "cockpit" || !this.isConnected) return;
+      this._cockpit = new mod.Cockpit(this.$("cockpit"), {
+        token: this._config.cesium_token,
+        color: (a) => altColor(a.alt_baro),
+        onPick: (hex) => this._select(hex),
+        onExit: () => this._setTab("map"),
+        label: (a) => {
+          const rt = this._route(a), info = this._info(a.hex);
+          const route = rt ? `${rt.o.iata || rt.o.icao} → ${rt.d.iata || rt.d.icao}` : "";
+          return { cs: callsign(a) || a.hex.toUpperCase(), sub: [route, info?.icao, info?.reg].filter(Boolean).join(" · ") };
+        },
+      });
+      this._cockpit.setData(this._acs, this._sel);
+      this._cockpit.start();
+    } catch (e) {
+      this.$("cockpit").innerHTML = `<div class="muted" style="padding:30px;text-align:center">Couldn't load the cockpit view: ${esc(e.message || e)}</div>`;
+    } finally {
+      this._cockpitLoading = false;
+    }
+  }
+
+  _closeCockpit() {
+    if (!this._cockpit) return;
+    this._cockpit.destroy();
+    this._cockpit = null;
   }
 
   _renderAll() {
@@ -1613,6 +1666,7 @@ class SkyAwareCard extends HTMLElement {
         <div><span>Squawk</span><b class="${this._emerg(a) ? (this._emerg(a).ok ? "bad" : "warn") : ""}">${esc(a.squawk || "–")}${this._emerg(a) && !this._emerg(a).ok ? "?" : ""}</b></div>
       </div>
       <div class="acts"><button class="btn pri" data-act="details"><ha-icon icon="mdi:information-outline"></ha-icon>Flight details</button>
+        <button class="btn" data-act="cockpit"><ha-icon icon="mdi:airplane-takeoff"></ha-icon>Cockpit</button>
         <button class="btn ${this._follow ? "on" : ""}" data-act="follow"><ha-icon icon="mdi:crosshairs"></ha-icon>${this._follow ? "Following" : "Follow"}</button>
         ${this._watchBtn(cs, true)}</div>`;
   }

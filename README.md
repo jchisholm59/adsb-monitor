@@ -4,9 +4,10 @@
 
 Two pieces that work together:
 
-- **`skyaware-card`**: a Home Assistant Lovelace card with six tabs. A live map with range rings and altitude-coloured
+- **`skyaware-card`**: a Home Assistant Lovelace card with seven tabs. A live map with range rings and altitude-coloured
   trails, a sortable aircraft list, a flight page (route, progress, estimated arrival, photo, live data), a
-  coverage polar chart, alert settings, and your original SkyAware page.
+  **cockpit view** (the selected aircraft's view over Google's photorealistic 3D world, banking with the aircraft;
+  optional, needs a free Cesium ion token), a coverage polar chart, alert settings, and your original SkyAware page.
 - **`adsb-monitor`**: a small always-on Node service (no dependencies) that watches your receiver 24/7. It records
   coverage, sends alerts to your phone through Home Assistant, and proxies SkyAware with CORS so the card also works
   away from home over a VPN.
@@ -150,7 +151,8 @@ downloaded aircraft database (~8 MB, refreshed weekly) and your airport.
 *Dashboard*, then download **SkyAware Card**. HACS adds the resource for you.
 
 **By hand:**
-1. Copy `dist/skyaware-card.js` to `/config/www/` on Home Assistant.
+1. Copy `dist/skyaware-card.js` and `dist/skyaware-cockpit.js` to `/config/www/` on Home Assistant (the cockpit file
+   is loaded by the card when its Cockpit tab opens; it isn't a resource of its own).
 2. Settings → Dashboards → ⋮ → Resources → Add: `/local/skyaware-card.js`, type *JavaScript module*.
    (After updating the file, change it to `/local/skyaware-card.js?v=2`, `?v=3`… so browsers reload it.)
 
@@ -163,7 +165,11 @@ downloaded aircraft database (~8 MB, refreshed weekly) and your airport.
    monitor:                           # adsb-monitor (optional, for Coverage / Alerts)
      - http://192.168.1.20:7100
      - http://100.64.0.10:7100
+   cesium_token: eyJ...               # optional, for the Cockpit tab: a Cesium ion token (ion.cesium.com/tokens)
    ```
+   For the Cockpit tab, create the token with only the `assets:read` scope and restrict its *Allowed URLs* to your
+   Home Assistant addresses: anyone who can open the dashboard can read it. CesiumJS (several MB) comes from Cesium's
+   CDN and only loads when you open the tab.
 
 ### 3. Phone alerts
 1. In Home Assistant, create an automation from [`ha-automation.yaml`](ha-automation.yaml). Pick a long random
