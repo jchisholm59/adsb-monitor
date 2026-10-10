@@ -302,11 +302,17 @@ const STYLE = `
   .ck .aprinfo { position: absolute; left: 50%; top: 50px; transform: translateX(-50%); padding: 3px 10px; border: 1.5px solid #ff6ef0; border-radius: 6px; background: rgba(0,0,0,.35); color: #ffb8f6; font-size: .85em; white-space: nowrap; }
   .ck .aprinfo:empty { display: none; }
   .ck .aprinfo b { color: #fff; }
+  .ck .hudsvg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; display: none; }
+  .ck.hud-on .hudsvg { display: block; }
+  .ck.hud-on .tape, .ck.hud-on .box, .ck.hud-on .bore, .ck.hud-on .bankind { display: none; }
+  .ck.hud-on .aprinfo { border-color: #7CFC9A; color: #b9ffc9; top: auto; bottom: 54px; }
+  .ck .hudsvg text { font-family: ui-monospace, "JetBrainsMono Nerd Font", monospace; paint-order: stroke; stroke: rgba(0,0,0,.55); stroke-width: 2.5px; }
   .ck .bankind { position: absolute; left: 50%; top: 50%; width: 300px; height: 120px; transform: translate(-50%, -100%) translateY(-28px); overflow: visible; }
   .ck .build { position: absolute; right: 12px; bottom: 46px; font-size: 10px; opacity: .45; }
   .ck .btns { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   .ck .btns button { font: inherit; font-size: .85em; color: #fff; background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.35); border-radius: 999px; padding: 5px 11px; cursor: pointer; }
   .ck .btns button:hover { background: rgba(255,255,255,.18); }
+  .ck .btns button.on { border-color: #7CFC9A; color: #7CFC9A; }
   .ck .btns button.on { background: var(--primary-color, #03a9f4); border-color: transparent; }
   .ck .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; line-height: 1.5; background: #0b1020; }
   .ck .msg > div { max-width: 560px; text-align: left; }
@@ -334,6 +340,20 @@ export class Cockpit {
     this.destroyed = false;
     this._listeners = [];
     this._render();
+    let hs = true;
+    try {
+      hs = localStorage.getItem("skyaware-card:hud") !== "0";
+    } catch (e) {}
+    this._setHudStyle(hs);
+  }
+
+  _setHudStyle(on) {
+    this.hudStyle = !!on;
+    this.$.ck.classList.toggle("hud-on", this.hudStyle && this.mode === "cockpit");
+    this.$.styleBtn.classList.toggle("on", this.hudStyle);
+    try {
+      localStorage.setItem("skyaware-card:hud", this.hudStyle ? "1" : "0");
+    } catch (e) {}
   }
 
   _render() {
@@ -346,6 +366,7 @@ export class Cockpit {
           <div class="box spd"><b>–</b><span>GS kt</span></div>
           <div class="box alt"><b>–</b><span>ALT ft</span><span class="vs"></span></div>
           <svg class="bore" viewBox="-23 -7 46 14"><path d="M-23,0H-9L-5,5L0,0L5,5L9,0H23" fill="none" stroke="#7CFC9A" stroke-width="2"/></svg>
+          <svg class="hudsvg"></svg>
           <svg class="apr" viewBox="-190 -145 380 290"></svg>
           <svg class="bankind" viewBox="-150 -120 300 120"></svg>
           <div class="aprinfo"></div>
@@ -354,6 +375,7 @@ export class Cockpit {
           <div class="btns">
             <button data-ck="prev" title="Previous aircraft (by distance)">◀</button>
             <button data-ck="next" title="Next aircraft (by distance)">▶</button>
+            <button data-ck="style" title="HUD symbology, as on an airliner's head-up display">HUD</button>
             <button data-ck="mode">Chase view</button>
             <button data-ck="reset" title="Look ahead again">Look ahead</button>
             <button data-ck="exit">Map</button>
@@ -363,7 +385,7 @@ export class Cockpit {
         <div class="msg">Loading the 3D world…</div>
       </div>`;
     const q = (s) => this.el.querySelector(s);
-    this.$ = { bankind: q(".bankind"), apr: q(".apr"), aprinfo: q(".aprinfo"), scene: q(".scene"), cs: q(".ident .cs"), sub: q(".ident .sub"), tape: q(".tape"), spd: q(".spd b"),
+    this.$ = { hudsvg: q(".hudsvg"), ck: q(".ck"), styleBtn: q('[data-ck="style"]'), bankind: q(".bankind"), apr: q(".apr"), aprinfo: q(".aprinfo"), scene: q(".scene"), cs: q(".ident .cs"), sub: q(".ident .sub"), tape: q(".tape"), spd: q(".spd b"),
       alt: q(".alt b"), vs: q(".alt .vs"), status: q(".status"), msg: q(".msg"), credits: q(".credits"), mode: q('[data-ck="mode"]') };
     this._on(this.el, "click", (e) => {
       const b = e.target.closest("[data-ck]");
@@ -375,7 +397,9 @@ export class Cockpit {
         this.mode = this.mode === "cockpit" ? "chase" : "cockpit";
         this.$.mode.textContent = this.mode === "cockpit" ? "Chase view" : "Cockpit view";
         this.look = { yaw: 0, pitch: 0 };
-      } else if (act === "reset") (this.look = { yaw: 0, pitch: 0 }), (this.fov = 60);
+        this._setHudStyle(this.hudStyle); // the HUD belongs to the cockpit view
+      } else if (act === "style") this._setHudStyle(!this.hudStyle);
+      else if (act === "reset") (this.look = { yaw: 0, pitch: 0 }), (this.fov = 60);
     });
   }
 
@@ -698,6 +722,7 @@ export class Cockpit {
         roll: C.Math.toRadians(this.mode === "cockpit" ? this.bank : 0),
       },
     });
+    if (this.hudStyle && this.mode === "cockpit") this._drawHud(a, p, pitch, norm360(this.heading + this.look.yaw), this.bank || 0);
     const age = (now - entry.recvMs) / 1000;
     this.$.status.textContent = age > LOST_S ? "Signal lost: holding last position"
       : age > NOTE_S ? `Last position ${Math.round(age)} s ago${p.stale ? ": holding" : ": estimating"}`
@@ -802,7 +827,8 @@ export class Cockpit {
     this._aprShown = true;
     const DOT = 30;
     const gs = clamp(ap.gsDev / GS_DOT_DEG, -2.6, 2.6), loc = clamp(-ap.locDev / LOC_DOT_DEG, -2.6, 2.6);
-    const mag = "#ff6ef0", dots = [-2, -1, 1, 2];
+    const hud = this.hudStyle && this.mode === "cockpit";
+    const mag = hud ? "#7CFC9A" : "#ff6ef0", dots = [-2, -1, 1, 2];
     let g = "";
     // Glideslope scale (x = 170)
     g += dots.map((k) => `<circle cx="170" cy="${k * DOT}" r="4" fill="none" stroke="#fff" stroke-width="1.6"/>`).join("");
@@ -817,6 +843,108 @@ export class Cockpit {
     const vert = Math.abs(dev) < 75 ? "on glidepath" : `${fmt(Math.abs(Math.round(dev / 10) * 10))} ft ${dev > 0 ? "high" : "low"}`;
     const lat = Math.abs(ap.cross) < 0.05 ? "on centreline" : `${fmt(Math.abs(ap.cross), 2)} nm ${ap.locDev > 0 ? "right" : "left"}`;
     this.$.aprinfo.innerHTML = `APPROACH <b>RWY ${esc(ap.r.id)} ${esc(ap.r.icao)}</b> · ${fmt(ap.along, 1)} nm · ${fmt(Math.max(0, ap.above))} ft above thr (${ap.src}) · ${vert} · ${lat}`;
+  }
+
+  // ---- HUD symbology ---------------------------------------------------------------------------
+  // Drawn every frame over the 3D view, in screen pixels. The pitch ladder, horizon and flight path vector are
+  // world-referenced: placed with the camera's real projection (the frustum's vertical field of view) and rolled with
+  // the bank, so the horizon line sits on the 3D horizon. The rest is fixed to the "airframe" (the screen).
+  _drawHud(a, p, camPitch, camHdg, roll) {
+    const svg = this.$.hudsvg, W = svg.clientWidth || this.el.clientWidth, H = svg.clientHeight || 400;
+    if (!W || !H) return;
+    const G = "#7CFC9A", F = 'fill="#7CFC9A"', S = 'stroke="#7CFC9A" fill="none"';
+    const fov = this.w.camera.frustum.fov, aspect = W / H;
+    const fovy = aspect > 1 ? 2 * Math.atan(Math.tan(fov / 2) / aspect) : fov;
+    const k = H / 2 / Math.tan(fovy / 2); // pixels per unit tangent
+    const off = (deg) => k * Math.tan(toRad(clamp(deg, -80, 80)));
+    const cx = W / 2, cy = H / 2;
+    const n = (v) => v.toFixed(1);
+    let o = "";
+
+    // World-referenced: horizon with heading marks, pitch ladder, flight path vector (rotated by -roll).
+    let w = "";
+    const hy = -off(0 - camPitch); // horizon
+    const half = Math.min(W * 0.42, 520);
+    w += `<line x1="${n(-half)}" y1="${n(hy)}" x2="${n(-48)}" y2="${n(hy)}" ${S} stroke-width="1.6"/><line x1="48" y1="${n(hy)}" x2="${n(half)}" y2="${n(hy)}" ${S} stroke-width="1.6"/>`;
+    for (let h = Math.ceil((camHdg - 40) / 5) * 5; h <= camHdg + 40; h += 5) {
+      const x = off(diffDeg(norm360(h), camHdg));
+      if (Math.abs(x) > half - 10 || Math.abs(x) < 50) continue;
+      const big = norm360(h) % 10 === 0;
+      w += `<line x1="${n(x)}" y1="${n(hy)}" x2="${n(x)}" y2="${n(hy - (big ? 9 : 5))}" ${S} stroke-width="1.3"/>`;
+      if (big) w += `<text x="${n(x)}" y="${n(hy - 13)}" ${F} font-size="12" text-anchor="middle">${String(Math.round(norm360(h) / 10)).padStart(2, "0")}</text>`;
+    }
+    for (let e = -20; e <= 25; e += 5) {
+      if (!e) continue;
+      const y = -off(e - camPitch);
+      if (Math.abs(y) > H * 0.4) continue;
+      const lo = 46, hi = 112, tk = e > 0 ? 7 : -7, dash = e < 0 ? ' stroke-dasharray="9 6"' : "";
+      w += `<path d="M${-hi},${n(y + tk)} L${-hi},${n(y)} L${-lo},${n(y)}" ${S} stroke-width="1.5"${dash}/><path d="M${hi},${n(y + tk)} L${hi},${n(y)} L${lo},${n(y)}" ${S} stroke-width="1.5"${dash}/>`;
+      w += `<text x="${-hi - 6}" y="${n(y + 4)}" ${F} font-size="12" text-anchor="end">${e}</text><text x="${hi + 6}" y="${n(y + 4)}" ${F} font-size="12">${e}</text>`;
+    }
+    // Flight path vector: where the aircraft is going (track and flight-path angle).
+    const fx = off(diffDeg(p.trk, camHdg)), fy = -off((this.fpa || 0) - camPitch);
+    w += `<g transform="translate(${n(fx)},${n(fy)})"><circle r="8" ${S} stroke-width="2"/><path d="M-22,0H-8M8,0H22M0,-8V-17" ${S} stroke-width="2"/></g>`;
+    o += `<g transform="translate(${n(cx)},${n(cy)}) rotate(${n(-roll)})">${w}</g>`;
+
+    // Airframe-fixed: boresight, bank scale, heading box, tapes, modes, data.
+    const bsy = cy - off(2); // roughly the nose, a little above the camera axis
+    o += `<path d="M${n(cx - 26)},${n(bsy)} H${n(cx - 12)} L${n(cx - 6)},${n(bsy + 7)} L${n(cx)},${n(bsy)} L${n(cx + 6)},${n(bsy + 7)} L${n(cx + 12)},${n(bsy)} H${n(cx + 26)}" ${S} stroke-width="1.6"/>`;
+    // Bank scale (sky pointer moves with the horizon).
+    const R = Math.min(H * 0.36, 230), pt = (d, r) => [cx + Math.sin(toRad(d)) * r, cy - Math.cos(toRad(d)) * r];
+    for (const d of [-45, -30, -20, -10, 0, 10, 20, 30, 45]) {
+      const L = d === 0 ? 0 : Math.abs(d) % 30 === 0 ? 14 : 8;
+      if (L) {
+        const [x1, y1] = pt(d, R), [x2, y2] = pt(d, R + L);
+        o += `<line x1="${n(x1)}" y1="${n(y1)}" x2="${n(x2)}" y2="${n(y2)}" ${S} stroke-width="1.6"/>`;
+      }
+    }
+    o += `<path d="M${n(cx)},${n(cy - R - 2)} l-6,-10 h12 z" ${S} stroke-width="1.5"/>`;
+    o += `<g transform="rotate(${n(-clamp(roll, -60, 60))} ${n(cx)} ${n(cy)})"><path d="M${n(cx)},${n(cy - R + 3)} l-7,11 h14 z" ${F}/></g>`;
+    if (Math.abs(roll) >= 2) o += `<text x="${n(cx)}" y="${n(cy - R + 30)}" ${F} font-size="12" text-anchor="middle">${Math.round(Math.abs(roll))}° ${roll > 0 ? "R" : "L"}${fin(a.roll) ? "" : " est."}</text>`;
+    // Heading box and selected heading.
+    const hb = cy - R - 30;
+    o += `<rect x="${n(cx - 30)}" y="${n(hb - 15)}" width="60" height="20" ${S} stroke-width="1.5"/><text x="${n(cx)}" y="${n(hb)}" ${F} font-size="14" text-anchor="middle">H ${String(Math.round(camHdg) % 360).padStart(3, "0")}</text>`;
+    if (fin(a.nav_heading)) o += `<text x="${n(cx + 40)}" y="${n(hb)}" ${F} font-size="12">SEL ${String(Math.round(a.nav_heading)).padStart(3, "0")}</text>`;
+    // Mode annunciators (sent by some aircraft): autopilot, LNAV, VNAV, ALT, APP, TCAS.
+    const MODES = { autopilot: "AP", lnav: "LNAV", vnav: "VNAV", althold: "ALT", approach: "APP", tcas: "TCAS" };
+    const modes = (Array.isArray(a.nav_modes) ? a.nav_modes : []).map((m) => MODES[m]).filter(Boolean);
+    if (modes.length) o += `<text x="${n(cx - R)}" y="${n(hb)}" ${F} font-size="12" text-anchor="middle">${esc(modes.join("  "))}</text>`;
+
+    // Tapes: ground speed (left), altitude (right). The boxed value is the current one.
+    const tH = Math.min(H * 0.5, 320), top = cy - tH / 2;
+    const tape = (x, side, val, step, label, span, fmtv, title, unit) => {
+      let t = `<line x1="${n(x)}" y1="${n(top)}" x2="${n(x)}" y2="${n(top + tH)}" ${S} stroke-width="1.5"/>`;
+      const px = tH / span;
+      for (let v = Math.ceil((val - span / 2) / step) * step; v <= val + span / 2; v += step) {
+        if (v < 0 && unit === "kt") continue;
+        const y = cy - (v - val) * px, majr = v % label === 0;
+        t += `<line x1="${n(x)}" y1="${n(y)}" x2="${n(x + side * (majr ? 12 : 7))}" y2="${n(y)}" ${S} stroke-width="1.3"/>`;
+        if (majr && Math.abs(y - cy) > 16) t += `<text x="${n(x + side * 16)}" y="${n(y + 4)}" ${F} font-size="12" text-anchor="${side > 0 ? "start" : "end"}">${fmtv(v)}</text>`;
+      }
+      const bw = 66, bx = side > 0 ? x + 4 : x - 4 - bw;
+      t += `<rect x="${n(bx)}" y="${n(cy - 13)}" width="${bw}" height="26" fill="rgba(0,0,0,.35)" stroke="${G}" stroke-width="1.6"/><text x="${n(bx + bw / 2)}" y="${n(cy + 6)}" ${F} font-size="16" text-anchor="middle">${fmtv(Math.round(val))}</text>`;
+      t += `<text x="${n(x + side * 10)}" y="${n(top - 10)}" ${F} font-size="12" text-anchor="${side > 0 ? "start" : "end"}">${title}</text>`;
+      return t;
+    };
+    const lx = cx - Math.min(W * 0.36, 430), rx = cx + Math.min(W * 0.36, 430);
+    const gs = fin(a.gs) ? a.gs : 0;
+    o += tape(lx, -1, gs, 10, 20, 120, (v) => String(v), "GS", "kt");
+    const alt = a.alt_baro === "ground" ? 0 : fin(a.alt_baro) ? a.alt_baro : 0;
+    o += tape(rx, 1, alt, 100, 500, 1200, (v) => fmt(v), fin(a.nav_altitude_mcp) ? `SEL ${fmt(a.nav_altitude_mcp)}` : "ALT", "ft");
+    // Selected altitude bug on the tape.
+    if (fin(a.nav_altitude_mcp) && Math.abs(a.nav_altitude_mcp - alt) < 600) {
+      const by = cy - (a.nav_altitude_mcp - alt) * (tH / 1200);
+      o += `<path d="M${n(rx)},${n(by)} l-9,-7 v14 z" ${S} stroke-width="1.6"/>`;
+    }
+    // Vertical speed and baro under the altitude tape; distance/runway under the speed tape.
+    const fpm = fin(a.geom_rate) ? a.geom_rate : a.baro_rate;
+    if (fin(fpm) && Math.abs(fpm) >= 100) o += `<text x="${n(rx + 10)}" y="${n(top + tH + 22)}" ${F} font-size="13">${fpm > 0 ? "+" : "−"}${fmt(Math.abs(Math.round(fpm / 50) * 50))} VS</text>`;
+    if (fin(a.nav_qnh)) o += `<text x="${n(rx + 10)}" y="${n(top + tH + 40)}" ${F} font-size="12">BARO ${Math.round(a.nav_qnh)}</text>`;
+    const ap = this._approach;
+    if (ap) o += `<text x="${n(lx - 10)}" y="${n(top + tH + 22)}" ${F} font-size="13" text-anchor="end">DME ${fmt(ap.along, 1)}</text><text x="${n(lx - 10)}" y="${n(top + tH + 40)}" ${F} font-size="12" text-anchor="end">RWY ${esc(ap.r.id)} ${esc(ap.r.icao)}</text>`;
+
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.innerHTML = o;
   }
 
   _drawTraffic(now) {
