@@ -43,16 +43,19 @@ Two pieces that work together:
 |---|---|---|
 | ![Coverage tab: polar range chart by altitude band](docs/coverage.png) | ![Aircraft tab: sortable list with routes and types](docs/aircraft.png) | ![Alerts tab: what to alert on, flights to watch, recent alerts](docs/alerts.png) |
 
-## Two ways to use it
-| | In Home Assistant | On its own |
-|---|---|---|
-| **Open it** | a dashboard view with the `custom:skyaware-card` card | **`http://<monitor>:7100/`** in any browser, or *Add to Home screen* on a phone |
-| **Install** | the card from HACS (or by hand) + the monitor | just the monitor (Node.js 22+, no dependencies) |
-| **Phone alerts** | HA companion app, through a webhook automation | the free [ntfy](https://ntfy.sh) app (or both at once) |
-| **3D view** token | pasted once, kept in your HA profile | pasted once per browser |
+## Three ways to use it
+| | In Home Assistant | As a Home Assistant add-on | On its own |
+|---|---|---|---|
+| **For** | any HA install | **HA OS** (or Supervised): everything on the HA box | anyone, no HA needed |
+| **Open it** | a dashboard view with the `custom:skyaware-card` card | **Planes** in HA's sidebar (and the card, if you like) | **`http://<monitor>:7100/`** in any browser, or *Add to Home screen* on a phone |
+| **Install** | the card from HACS (or by hand) + the monitor | add [`jchisholm59/ha-addons`](https://github.com/jchisholm59/ha-addons) to the Add-on Store, install **ADS-B Monitor** | the monitor: `git clone` + **`./install.sh`** (Node.js 22+, no dependencies) |
+| **Settings** | the monitor's `.env` | the add-on's Configuration tab | `.env` (asked for by `install.sh`) |
+| **Phone alerts** | HA companion app, through a webhook automation | the same | the free [ntfy](https://ntfy.sh) app (or both) |
+| **3D view** token | pasted once, kept in your HA profile | the same | pasted once per browser |
 
-Same card, same features either way: the monitor serves it with a small stand-in for the bits it normally takes from
-Home Assistant. Details in [Without Home Assistant](#without-home-assistant).
+Same card, same features every way: the monitor serves it with a small stand-in for the bits it normally takes from
+Home Assistant. Details in [Without Home Assistant](#without-home-assistant) and the
+[add-on's documentation](https://github.com/jchisholm59/ha-addons/blob/main/adsb-monitor/DOCS.md).
 
 ## Features
 
@@ -162,6 +165,16 @@ flowchart LR
 ## Install
 
 ### 1. The monitor
+**Quick:** clone it and run the installer. It checks Node.js 22+, installs pm2 if needed, asks for the main settings
+(PiAware address, your airport, ntfy and/or HA webhook), writes them to `.env`, and starts the monitor under pm2 so it survives reboots:
+```bash
+git clone https://github.com/jchisholm59/adsb-monitor.git
+cd adsb-monitor && ./install.sh
+```
+Run `./install.sh` again any time to change those settings. **On HA OS**, use the add-on instead (see
+[Three ways to use it](#three-ways-to-use-it)).
+
+**By hand**, if you prefer:
 ```bash
 git clone https://github.com/jchisholm59/adsb-monitor.git
 cd adsb-monitor
@@ -262,6 +275,7 @@ use your browser's **Add to Home screen**: it opens full screen like an app.
 | `NTFY_TOKEN` | none | Only for a protected ntfy server or topic |
 | `DASHBOARD_URL` | none | Opened when you tap an ntfy alert, e.g. `http://192.168.1.20:7100/` |
 | `PORT` | `7100` | Dashboard, API and proxy port |
+| `DATA_DIR` | `./data` | Where settings, coverage and the alert log are kept (the HA add-on uses `/data`) |
 | `MILITARY_RADIUS`, `HELI_RADIUS` | `30`, `10` | Starting alert distances (nm); then set in the card |
 | `COOLDOWN_HOURS` | `2` | Starting per-aircraft cooldown; then set in the card |
 | `OVERHEAD_RADIUS` | `3` | Starting overhead distance (nm); then set in the card |

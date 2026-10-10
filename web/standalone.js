@@ -52,16 +52,17 @@ customElements.define("ha-icon", class extends HTMLElement {
 
 // Mount the card. Settings: anything in the monitor's data/card.json overrides these (title, rings, markers...).
 export async function mount(el) {
-  const origin = location.origin;
+  // The monitor's base URL: the page's own folder, so it works at / and under HA ingress (/api/hassio_ingress/<token>/).
+  const base = new URL(".", location.href).href.replace(/\/$/, "");
   let extra = {};
   try {
-    const r = await fetch("/card-config.json", { cache: "no-store" });
+    const r = await fetch(base + "/card-config.json", { cache: "no-store" });
     if (r.ok) extra = await r.json();
   } catch (e) {}
   const v = new URL(import.meta.url).searchParams.get("v") || "";
-  await import(`/dist/skyaware-card.js${v ? "?v=" + v : ""}`);
+  await import(`${base}/dist/skyaware-card.js${v ? "?v=" + v : ""}`);
   const card = document.createElement("skyaware-card");
-  card.setConfig({ urls: [origin], monitor: [origin], ...extra });
+  card.setConfig({ urls: [base], monitor: [base], ...extra });
   el.appendChild(card);
   const hass = () => ({ themes: { darkMode: dark.matches }, states: {} });
   card.hass = hass();
