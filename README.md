@@ -75,6 +75,9 @@ Two pieces that work together:
   around, wheel to zoom, **Chase view** to follow it from behind (the silhouette banks with it), ◀ ▶ to hop between aircraft. Needs a free
   [Cesium ion](https://ion.cesium.com/) token: paste it into the tab once (it's saved to your Home Assistant profile).
   Wants a decent GPU; fine on desktops and phones.
+  A **HUD** style (on by default) draws it like an airliner's head-up display: horizon and pitch ladder rolling with
+  the bank, a flight path vector, speed and altitude tapes, the heading, and the autopilot's selected altitude and
+  heading, baro setting and modes when the aircraft sends them (most do).
   **Approach mode** switches on by itself when the aircraft is on final to a runway near you: the extended centreline
   and the 3° glidepath appear in the 3D view, and the HUD gets ILS-style glideslope and localizer diamonds (real ILS
   scaling) with the runway, distance to the threshold, and how far high or low and left or right it is. Runway data
