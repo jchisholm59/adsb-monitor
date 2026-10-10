@@ -46,8 +46,20 @@ fi
 if [[ "${change,,}" == y* ]] || [ ! -s .env ] || [ $YES = 1 -a ! -f .env.installed ]; then
   cur() { sed -n "s/^$1=//p" .env | head -1; }
   PIAWARE=${PIAWARE:-$(cur PIAWARE)}; AIRPORT=${AIRPORT:-$(cur AIRPORT)}; NTFY_URL=${NTFY_URL:-$(cur NTFY_URL)}
-  HA_WEBHOOK=${HA_WEBHOOK:-$(cur HA_WEBHOOK)}; PORT=${PORT:-$(cur PORT)}
-  ask PIAWARE "Your PiAware / dump1090-fa (SkyAware) address" "${PIAWARE:-http://localhost}"
+  HA_WEBHOOK=${HA_WEBHOOK:-$(cur HA_WEBHOOK)}; PORT=${PORT:-$(cur PORT)}; SOURCE=${SOURCE:-$(cur SOURCE)}
+  LAT=${LAT:-$(cur LAT)}; LON=${LON:-$(cur LON)}; RADIUS_NM=${RADIUS_NM:-$(cur RADIUS_NM)}
+  echo "Aircraft can come from your own receiver (piaware), or with no receiver from a public aggregator:"
+  echo "  adsb.lol (free, ODbL data) or adsb.fi (personal, non-commercial use only)."
+  ask SOURCE "Aircraft source: piaware, adsb.lol or adsb.fi" "${SOURCE:-piaware}"
+  if [ "$SOURCE" = piaware ]; then
+    ask PIAWARE "Your PiAware / dump1090-fa (SkyAware) address" "${PIAWARE:-http://localhost}"
+  else
+    ask LAT "Centre of your area: latitude (decimal degrees)" "$LAT"
+    ask LON "Centre of your area: longitude (decimal degrees, west is negative)" "$LON"
+    ask RADIUS_NM "Radius around it, in nm (max 250)" "${RADIUS_NM:-100}"
+    setenv LAT "$LAT"; setenv LON "$LON"; setenv RADIUS_NM "$RADIUS_NM"
+  fi
+  setenv SOURCE "$SOURCE"
   ask AIRPORT "Your local airport's ICAO code, for arrival alerts (blank: none)" "$AIRPORT"
   ask NTFY_URL "ntfy topic URL for phone alerts without Home Assistant (blank: none)" "$NTFY_URL"
   ask HA_WEBHOOK "Home Assistant webhook URL for phone alerts (blank: none)" "$HA_WEBHOOK"

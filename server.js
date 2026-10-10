@@ -23,6 +23,18 @@ const num = (k, d) => (Number.isFinite(Number(env(k))) && env(k) !== '' ? Number
 const PORT = num('PORT', 7100);
 const PIAWARE = env('PIAWARE', 'http://piaware.local').replace(/\/$/, '');
 const SKYAWARE = ('/' + env('SKYAWARE_PATH', '/skyaware/') + '/').replace(/\/+/g, '/');
+// Where aircraft come from: your own receiver (piaware, the default), or a public ADS-B aggregator for the area around
+// LAT/LON (no receiver needed). Both aggregators return readsb-format JSON ({ac: [...], now: ms}), turned into the
+// aircraft.json the card reads. Their terms: adsb.lol data is ODbL (attribution); adsb.fi is personal, non-commercial
+// use, at most 1 request/s, with a link to adsb.fi. The monitor makes one request every POLL_MS however many viewers.
+const AGGREGATORS = {
+  // every: ms between requests (adsb.lol answers 429 at 2 s, is fine at 5 s; adsb.fi allows 1/s).
+  'adsb.lol': { url: (lat, lon, r) => `https://api.adsb.lol/v2/point/${lat}/${lon}/${r}`, name: 'adsb.lol', home: 'https://adsb.lol', license: 'ODbL', every: 5000 },
+  'adsb.fi': { url: (lat, lon, r) => `https://opendata.adsb.fi/api/v3/lat/${lat}/lon/${lon}/dist/${r}`, name: 'adsb.fi', home: 'https://adsb.fi', license: 'personal, non-commercial use', every: 3000 },
+};
+const SOURCE = env('SOURCE', 'piaware').toLowerCase();
+const AGG = AGGREGATORS[SOURCE] || null;
+const RADIUS_NM = Math.max(1, Math.min(250, Number(env('RADIUS_NM', '100')) || 100));
 const HA_WEBHOOK = env('HA_WEBHOOK');
 // ntfy (https://ntfy.sh, or your own ntfy server): phone alerts without Home Assistant. NTFY_URL is the topic URL,
 // e.g. https://ntfy.sh/my-planes-7f3k; NTFY_TOKEN only for a protected server or topic. Either or both can be set.
@@ -716,17 +728,18 @@ async function poll() {
   polling = true;
   try {
     if (!rx) {
-      // LAT/LON in .env win; otherwise the position PiAware was set up with.
-      const r = env('LAT') && env('LON') ? {} : await getJson(`${PIAWARE}${SKYAWARE}data/receiver.json`);
+      // LAT/LON in .env win; otherwise the position PiAware was set up with (an aggregator needs LAT/LON).
+      const r = env('LAT') && env('LON') ? {} : AGG ? {} : await getJson(`${PIAWARE}${SKYAWARE}data/receiver.json`);
       rx = { lat: num('LAT', r.lat), lon: num('LON', r.lon) };
       if (!Number.isFinite(rx.lat) || !Number.isFinite(rx.lon)) {
         rx = null;
-        throw new Error('receiver position unknown: set LAT and LON in .env');
+        throw new Error(AGG ? `SOURCE=${SOURCE} needs LAT and LON (the centre of your area) in .env` : 'receiver position unknown: set LAT and LON in .env');
       }
     }
-    const d = await getJson(`${PIAWARE}${SKYAWARE}data/aircraft.json`);
+    if (AGG && Date.now() < aggNextAt) return; // not this tick: the aggregator is polled at its own pace
+    const d = AGG ? await fetchAggregator() : await getJson(`${PIAWARE}${SKYAWARE}data/aircraft.json`);
     if (last && d.now <= last.now) return;
-    recordCoverage(d, d.now * 1000);
+    if (!AGG) recordCoverage(d, d.now * 1000); // coverage is about your own receiver's range
     await checkAlerts(d);
     last = { now: d.now, messages: d.messages };
     lastOk = Date.now();
@@ -739,6 +752,29 @@ async function poll() {
     polling = false;
   }
 }
+
+// ---- aggregator source ------------------------------------------------------
+let aggPayload = null; // the latest aircraft.json built from the aggregator, served to the card
+let aggNextAt = 0, aggWait = 0; // polite pacing: AGG.every between requests, backing off on 429
+async function fetchAggregator() {
+  const r = await fetchT(AGG.url(rx.lat.toFixed(4), rx.lon.toFixed(4), RADIUS_NM), { headers: { 'User-Agent': 'adsb-monitor (https://github.com/jchisholm59/adsb-monitor)' } }, 8000);
+  if (r.status === 429) {
+    const ra = Number(r.headers.get('retry-after')) * 1000;
+    aggWait = Number.isFinite(ra) && ra > 0 ? ra : Math.min(60_000, Math.max(AGG.every * 2, aggWait * 2));
+    aggNextAt = Date.now() + aggWait;
+    throw new Error(`${AGG.name} is rate-limiting (HTTP 429): waiting ${Math.round(aggWait / 1000)} s`);
+  }
+  aggWait = 0;
+  aggNextAt = Date.now() + AGG.every;
+  if (!r.ok) throw new Error(`${AGG.name} HTTP ${r.status}`);
+  const j = await r.json();
+  const nowS = (j.now > 1e11 ? j.now / 1000 : j.now) || Date.now() / 1000;
+  const aircraft = (j.ac || j.aircraft || []).map((a) => ({ ...a, seen: a.seen ?? 0, seen_pos: a.seen_pos ?? a.seen ?? 0 }));
+  const d = { now: nowS, messages: 0, aircraft };
+  aggPayload = JSON.stringify(d);
+  return d;
+}
+const sourceInfo = () => (AGG ? { name: AGG.name, url: AGG.home, license: AGG.license, radius: RADIUS_NM } : null);
 
 // ---- HTTP -----------------------------------------------------------------
 
@@ -809,11 +845,20 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(204, CORS);
       return res.end();
     }
+    // The card's receiver data: proxied from PiAware, or built from the aggregator (aircraft + a receiver at LAT/LON).
+    if (req.method === 'GET' && AGG && (p.startsWith(SKYAWARE) || p === '/status.json')) {
+      if (p === SKYAWARE + 'data/aircraft.json' && aggPayload) {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', ...CORS });
+        return res.end(aggPayload);
+      }
+      if (p === SKYAWARE + 'data/receiver.json' && rx) return sendJson(res, { version: `aggregator ${AGG.name}`, refresh: POLL_MS, history: 0, lat: rx.lat, lon: rx.lon, source: sourceInfo() });
+      return sendJson(res, { error: `no ${p} with SOURCE=${SOURCE}` }, 404);
+    }
     if (req.method === 'GET' && (p.startsWith(SKYAWARE) || p === '/status.json')) return proxy(req, res, url);
     if (p === '/api/status') {
       return sendJson(res, {
         ok: !lastErr && Date.now() - lastOk < 15_000, lastPoll: lastOk, error: lastErr, aircraft: acCount, rx,
-        piaware: await piawareStatus(), webhook: !!HA_WEBHOOK, ntfy: !!NTFY_URL, quiet: inQuiet(),
+        piaware: AGG ? null : await piawareStatus(), source: sourceInfo(), webhook: !!HA_WEBHOOK, ntfy: !!NTFY_URL, quiet: inQuiet(),
         db: { military: DB.mil.size, helicopters: DB.heli.size, loadedAt: DB.loadedAt, error: DB.error },
       });
     }
@@ -859,7 +904,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => log(`adsb-monitor on :${PORT} (dashboard at /), PiAware ${PIAWARE}${SKYAWARE}, alerts: ${[HA_WEBHOOK && 'HA webhook', NTFY_URL && 'ntfy'].filter(Boolean).join(' + ') || 'none set'}`));
+server.listen(PORT, () => log(`adsb-monitor on :${PORT} (dashboard at /), ${AGG ? `aircraft from ${AGG.name} (${RADIUS_NM} nm around LAT/LON)` : `PiAware ${PIAWARE}${SKYAWARE}${SOURCE !== 'piaware' ? ` (unknown SOURCE=${SOURCE}: use piaware, adsb.lol or adsb.fi)` : ''}`}, alerts: ${[HA_WEBHOOK && 'HA webhook', NTFY_URL && 'ntfy'].filter(Boolean).join(' + ') || 'none set'}`));
 setInterval(poll, POLL_MS);
 poll();
 setInterval(saveCoverage, SAVE_MS);

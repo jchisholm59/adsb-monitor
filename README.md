@@ -241,6 +241,26 @@ downloaded aircraft database (~8 MB, refreshed weekly) and your airport.
 
 The webhook is `local_only`, so the monitor must be on the same network as HA. It needs no HA token.
 
+## No receiver? Use an aggregator
+No PiAware of your own? The monitor can take aircraft from a **public ADS-B aggregator** instead, for the area around a
+point you choose: set `SOURCE=adsb.lol` (or `adsb.fi`), `LAT`, `LON` and `RADIUS_NM` (up to 250) in `.env`, or answer
+`install.sh`'s first question. Then the map, aircraft list, flight pages, the **cockpit** with its HUD and approach
+guidance, and all the **alerts** (arrivals, military, helicopters, emergencies) work for anywhere those aggregators cover,
+from community feeders.
+
+| `SOURCE` | Terms (yours to keep) | Polled every |
+|---|---|---|
+| `adsb.lol` | Free; the data is [ODbL](https://opendatacommons.org/licenses/odbl/summary/) (credited on the map). adsb.lol may require a key (free for feeders) in future | 5 s |
+| `adsb.fi` | **Personal, non-commercial use only**; credited with a link on the map | 3 s |
+
+The card shows **"Aircraft: adsb.lol (ODbL)"** on the map, and hides what only makes sense with a receiver of your own:
+the **Coverage** and **SkyAware** tabs, the coverage overlay and the PiAware status lights. Trails build up from when the
+monitor starts (with a receiver they're pre-filled from SkyAware's history). One request every few seconds, however
+many people view it; if an aggregator ever says "too many requests" the monitor backs off and retries.
+
+Have a friend with a receiver? Point `PIAWARE` at theirs instead (ideally shared over Tailscale rather than opened to
+the internet): that gives you everything, coverage included, for *their* receiver.
+
 ## Without Home Assistant
 
 ![The Planes dashboard served by adsb-monitor on its own, in a browser with no Home Assistant: satellite view of the Maritimes and New England with live traffic around Nova Scotia, range rings and the PiAware/FlightAware/MLAT status lights](docs/standalone.jpg)
@@ -265,6 +285,8 @@ use your browser's **Add to Home screen**: it opens full screen like an app.
 ### `.env` (monitor)
 | Variable | Default | |
 |---|---|---|
+| `SOURCE` | `piaware` | `piaware` (your receiver), or `adsb.lol` / `adsb.fi` for an aggregator around `LAT`/`LON` (see [No receiver?](#no-receiver-use-an-aggregator)) |
+| `RADIUS_NM` | `100` | With an aggregator: the area's radius, up to 250 nm |
 | `PIAWARE` | `http://piaware.local` | Your PiAware / dump1090-fa box |
 | `SKYAWARE_PATH` | `/skyaware/` | Where SkyAware is served on it |
 | `LAT`, `LON` | from PiAware | Receiver position, only if you want to override PiAware's |

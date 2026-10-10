@@ -492,11 +492,34 @@ class SkyAwareCard extends HTMLElement {
     try {
       const r = await this._get(this._config.path + "data/receiver.json");
       this._rx = { lat: this._config.lat ?? r.lat, lon: this._config.lon ?? r.lon, history: r.history || 0 };
+      this._source = r.source || null; // set when adsb-monitor gets aircraft from a public aggregator, not a receiver
+      this._applySource();
       this._loadHistory();
       this._renderAll();
     } catch (e) {
       setTimeout(() => this._loadReceiver(), 10000);
     }
+  }
+
+  // Aircraft from an aggregator (adsb-monitor's SOURCE=adsb.lol / adsb.fi): credit it on the map (their terms ask for
+  // that), and hide what only makes sense with your own receiver: Coverage, SkyAware, the coverage overlay.
+  _applySource() {
+    const src = this._source;
+    if (!this._built) return;
+    for (const t of ["coverage", "skyaware"]) {
+      const b = this.$("tabs").querySelector(`button[data-t="${t}"]`);
+      if (b) b.style.display = src ? "none" : "";
+    }
+    this.$("cvm").style.display = src ? "none" : "";
+    const attr = this.shadowRoot.querySelector(".attr");
+    attr.querySelector(".src")?.remove();
+    if (src) {
+      const el = document.createElement("span");
+      el.className = "src";
+      el.innerHTML = `Aircraft: <a href="${esc(src.url)}" target="_blank" rel="noreferrer">${esc(src.name)}</a> (${esc(src.license)}) · `;
+      attr.prepend(el);
+    }
+    if (src && (this._tab === "coverage" || this._tab === "skyaware")) this._setTab("map");
   }
 
   // Pre-fill trails from SkyAware's history snapshots (a ring buffer of ~30 s snapshots), once per page load.
@@ -1120,6 +1143,7 @@ class SkyAwareCard extends HTMLElement {
     this._built = true;
     if (this.isConnected && this._ro) this._ro.observe(this.$("map"));
     this._setTab(this._tab);
+    this._applySource();
   }
 
   _setTab(t) {
@@ -1266,7 +1290,7 @@ class SkyAwareCard extends HTMLElement {
       ? `<span class="dots">${[["piaware", "PiAware"], ["adept", "FlightAware"], ["mlat", "MLAT"], ["radio", "Radio"]]
           .filter(([k]) => s[k]).map(([k, l]) => `<span class="dot" title="${esc(s[k].message)}"><i class="${esc(s[k].status)}"></i>${l}</span>`).join("")}</span>`
       : "";
-    this.$("meta").innerHTML = `${this._rate !== undefined ? `<span>${num(this._rate)} msg/s</span>` : ""}${dots}`;
+    this.$("meta").innerHTML = `${this._rate !== undefined && !this._source ? `<span>${num(this._rate)} msg/s</span>` : ""}${dots}`;
     const nw = this._settings?.watch?.length;
     this.$("n-alerts").textContent = nw ? `${nw} watched` : "";
     this.$("n-list").textContent = acs.length ? acs.length : "";
