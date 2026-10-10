@@ -69,7 +69,7 @@ Two pieces that work together:
 - **Cockpit**: sit in the selected aircraft. Its view out of the windscreen over Google's photorealistic 3D world
   (CesiumJS, loaded only when you open the tab), driven by your receiver's live data: the camera follows the reported
   track, climbs and descends with the flight path, and **banks in turns** (from the aircraft's reported roll when it
-  sends one, else from its turn rate). Between reports it flies on at the reported speed and eases onto each new fix,
+  sends one, else from the turn rate worked out from its changing track, so turns onto base and final bank smoothly). Between reports it flies on at the reported speed and eases onto each new fix,
   so the view never jumps. Other traffic shows as altitude-coloured points with callsign and altitude. A HUD with
   callsign, route, type and registration, a heading tape, ground speed, altitude and vertical speed. Drag to look
   around, wheel to zoom, **Chase view** to follow it from behind (the silhouette banks with it), ◀ ▶ to hop between aircraft. Needs a free
