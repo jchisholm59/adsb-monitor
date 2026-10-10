@@ -43,6 +43,17 @@ Two pieces that work together:
 |---|---|---|
 | ![Coverage tab: polar range chart by altitude band](docs/coverage.png) | ![Aircraft tab: sortable list with routes and types](docs/aircraft.png) | ![Alerts tab: what to alert on, flights to watch, recent alerts](docs/alerts.png) |
 
+## Two ways to use it
+| | In Home Assistant | On its own |
+|---|---|---|
+| **Open it** | a dashboard view with the `custom:skyaware-card` card | **`http://<monitor>:7100/`** in any browser, or *Add to Home screen* on a phone |
+| **Install** | the card from HACS (or by hand) + the monitor | just the monitor (Node.js 22+, no dependencies) |
+| **Phone alerts** | HA companion app, through a webhook automation | the free [ntfy](https://ntfy.sh) app (or both at once) |
+| **3D view** token | pasted once, kept in your HA profile | pasted once per browser |
+
+Same card, same features either way: the monitor serves it with a small stand-in for the bits it normally takes from
+Home Assistant. Details in [Without Home Assistant](#without-home-assistant).
+
 ## Features
 
 ### The card
@@ -218,6 +229,9 @@ downloaded aircraft database (~8 MB, refreshed weekly) and your airport.
 The webhook is `local_only`, so the monitor must be on the same network as HA. It needs no HA token.
 
 ## Without Home Assistant
+
+![The Planes dashboard served by adsb-monitor on its own, in a browser with no Home Assistant: live traffic around Nova Scotia, range rings, the PiAware/FlightAware/MLAT status lights, light theme](docs/standalone.jpg)
+
 The monitor serves the whole dashboard on its own port: open **`http://<monitor>:7100/`** in any browser. It's the same
 card, with the few things it normally takes from Home Assistant provided by a small page in `web/` (a card frame, the
 Material Design icons it uses, light and dark colours that follow your system setting). Everything works the same:
