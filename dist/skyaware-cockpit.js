@@ -864,7 +864,8 @@ export class Cockpit {
     // World-referenced: horizon with heading marks, pitch ladder, flight path vector (rotated by -roll).
     let w = "";
     const hy = -off(0 - camPitch); // horizon
-    const half = Math.min(W * 0.42, 520);
+    const tapeX = Math.min(W * 0.36, 430); // the tapes' distance from centre (below); the horizon stops short of them
+    const half = Math.max(120, tapeX - 34);
     w += `<line x1="${n(-half)}" y1="${n(hy)}" x2="${n(-48)}" y2="${n(hy)}" ${S} stroke-width="1.6"/><line x1="48" y1="${n(hy)}" x2="${n(half)}" y2="${n(hy)}" ${S} stroke-width="1.6"/>`;
     for (let h = Math.ceil((camHdg - 40) / 5) * 5; h <= camHdg + 40; h += 5) {
       const x = off(diffDeg(norm360(h), camHdg));
@@ -926,7 +927,7 @@ export class Cockpit {
       t += `<text x="${n(x + side * 10)}" y="${n(top - 10)}" ${F} font-size="12" text-anchor="${side > 0 ? "start" : "end"}">${title}</text>`;
       return t;
     };
-    const lx = cx - Math.min(W * 0.36, 430), rx = cx + Math.min(W * 0.36, 430);
+    const lx = cx - tapeX, rx = cx + tapeX;
     const gs = fin(a.gs) ? a.gs : 0;
     o += tape(lx, -1, gs, 10, 20, 120, (v) => String(v), "GS", "kt");
     const alt = a.alt_baro === "ground" ? 0 : fin(a.alt_baro) ? a.alt_baro : 0;
