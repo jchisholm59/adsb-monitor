@@ -230,7 +230,7 @@ The webhook is `local_only`, so the monitor must be on the same network as HA. I
 
 ## Without Home Assistant
 
-![The Planes dashboard served by adsb-monitor on its own, in a browser with no Home Assistant: live traffic around Nova Scotia, range rings, the PiAware/FlightAware/MLAT status lights, light theme](docs/standalone.jpg)
+![The Planes dashboard served by adsb-monitor on its own, in a browser with no Home Assistant: satellite view of the Maritimes and New England with live traffic around Nova Scotia, range rings and the PiAware/FlightAware/MLAT status lights](docs/standalone.jpg)
 
 The monitor serves the whole dashboard on its own port: open **`http://<monitor>:7100/`** in any browser. It's the same
 card, with the few things it normally takes from Home Assistant provided by a small page in `web/` (a card frame, the
