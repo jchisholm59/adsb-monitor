@@ -242,6 +242,7 @@ const STYLE = `
   .ck .aprinfo { position: absolute; left: 50%; top: 50px; transform: translateX(-50%); padding: 3px 10px; border: 1.5px solid #ff6ef0; border-radius: 6px; background: rgba(0,0,0,.35); color: #ffb8f6; font-size: .85em; white-space: nowrap; }
   .ck .aprinfo:empty { display: none; }
   .ck .aprinfo b { color: #fff; }
+  .ck .bankind { position: absolute; left: 50%; top: 50%; width: 300px; height: 120px; transform: translate(-50%, -100%) translateY(-28px); overflow: visible; }
   .ck .build { position: absolute; right: 12px; bottom: 46px; font-size: 10px; opacity: .45; }
   .ck .btns { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   .ck .btns button { font: inherit; font-size: .85em; color: #fff; background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.35); border-radius: 999px; padding: 5px 11px; cursor: pointer; }
@@ -286,6 +287,7 @@ export class Cockpit {
           <div class="box alt"><b>–</b><span>ALT ft</span><span class="vs"></span></div>
           <svg class="bore" viewBox="-23 -7 46 14"><path d="M-23,0H-9L-5,5L0,0L5,5L9,0H23" fill="none" stroke="#7CFC9A" stroke-width="2"/></svg>
           <svg class="apr" viewBox="-190 -145 380 290"></svg>
+          <svg class="bankind" viewBox="-150 -120 300 120"></svg>
           <div class="aprinfo"></div>
           <div class="status"></div>
           <div class="build">${BUILD ? "v" + esc(BUILD) : ""}</div>
@@ -301,7 +303,7 @@ export class Cockpit {
         <div class="msg">Loading the 3D world…</div>
       </div>`;
     const q = (s) => this.el.querySelector(s);
-    this.$ = { apr: q(".apr"), aprinfo: q(".aprinfo"), scene: q(".scene"), cs: q(".ident .cs"), sub: q(".ident .sub"), tape: q(".tape"), spd: q(".spd b"),
+    this.$ = { bankind: q(".bankind"), apr: q(".apr"), aprinfo: q(".aprinfo"), scene: q(".scene"), cs: q(".ident .cs"), sub: q(".ident .sub"), tape: q(".tape"), spd: q(".spd b"),
       alt: q(".alt b"), vs: q(".alt .vs"), status: q(".status"), msg: q(".msg"), credits: q(".credits"), mode: q('[data-ck="mode"]') };
     this._on(this.el, "click", (e) => {
       const b = e.target.closest("[data-ck]");
@@ -803,6 +805,7 @@ export class Cockpit {
       this.$.spd.textContent = this.$.alt.textContent = "–";
       this.$.vs.textContent = "";
       this.$.tape.innerHTML = "";
+      this.$.bankind.innerHTML = "";
       return;
     }
     const lab = this.opts.label?.(a) || {};
@@ -825,6 +828,28 @@ export class Cockpit {
     g += `<path d="M-6,34L0,28L6,34" fill="#7CFC9A"/><text x="0" y="12" dy="-0" fill="none"></text>`;
     g += `<rect x="-20" y="-1" width="40" height="15" rx="3" fill="rgba(0,0,0,.55)" stroke="#7CFC9A"/><text x="0" y="11" fill="#7CFC9A" font-size="12" text-anchor="middle">${String(Math.round(hdg) % 360).padStart(3, "0")}</text>`;
     this.$.tape.innerHTML = g;
+    this._hudBank(a);
+  }
+
+  // Bank indicator, as on an airliner's display: a fixed arc with ticks at 10/20/30 (and 45, 60) degrees each side and
+  // a sky pointer that moves with the horizon (right bank swings it left), plus "14° R" (est. = from the turn rate).
+  _hudBank(a) {
+    if (!a) return void (this.$.bankind.innerHTML = "");
+    const R = 104, bank = this.bank || 0;
+    const pt = (deg, r) => [Math.sin(toRad(deg)) * r, -Math.cos(toRad(deg)) * r];
+    let g = `<path d="M${pt(-60, R).join(",")} A${R},${R} 0 0 1 ${pt(60, R).join(",")}" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1.6"/>`;
+    for (const d of [-60, -45, -30, -20, -10, 10, 20, 30, 45, 60]) {
+      const len = Math.abs(d) === 30 || Math.abs(d) === 60 ? 13 : 8;
+      const [x1, y1] = pt(d, R), [x2, y2] = pt(d, R + len);
+      g += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#fff" stroke-width="${len > 8 ? 2 : 1.5}"/>`;
+    }
+    g += `<path d="M0,${-R - 2} L-6,${-R - 12} L6,${-R - 12} Z" fill="none" stroke="#fff" stroke-width="1.6"/>`; // zero mark
+    // Sky pointer: rotates opposite the bank, along the inside of the arc.
+    const b = clamp(bank, -60, 60);
+    g += `<g transform="rotate(${(-b).toFixed(1)})"><path d="M0,${-R + 2} L-7,${-R + 14} L7,${-R + 14} Z" fill="#7CFC9A" stroke="#000" stroke-width="1"/></g>`;
+    const est = !fin(a.roll);
+    if (Math.abs(bank) >= 2) g += `<text x="0" y="${-R + 34}" fill="#7CFC9A" font-size="13" font-weight="700" stroke="#000" stroke-width="2.5" paint-order="stroke" text-anchor="middle">${Math.round(Math.abs(bank))}° ${bank > 0 ? "R" : "L"}${est ? '<tspan fill-opacity=".7" font-size="10"> est.</tspan>' : ""}</text>`;
+    this.$.bankind.innerHTML = g;
   }
 
   destroy() {
