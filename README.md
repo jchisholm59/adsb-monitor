@@ -1,6 +1,7 @@
 # adsb-monitor + SkyAware card
 
-**A Home Assistant dashboard for your PiAware / ADS-B receiver, with phone alerts and coverage history.**
+**A dashboard for your PiAware / ADS-B receiver, with phone alerts and coverage history: in Home Assistant, or on
+its own in any browser.**
 
 Two pieces that work together:
 
@@ -9,8 +10,9 @@ Two pieces that work together:
   **cockpit view** (the selected aircraft's view over Google's photorealistic 3D world, banking with the aircraft;
   optional, needs a free Cesium ion token), a coverage polar chart, alert settings, and your original SkyAware page.
 - **`adsb-monitor`**: a small always-on Node service (no dependencies) that watches your receiver 24/7. It records
-  coverage, sends alerts to your phone through Home Assistant, and proxies SkyAware with CORS so the card also works
-  away from home over a VPN.
+  coverage, sends alerts to your phone (through Home Assistant and/or [ntfy](https://ntfy.sh)), proxies SkyAware with
+  CORS so the card also works away from home over a VPN, and **serves the same dashboard by itself**: no Home
+  Assistant needed (see [Without Home Assistant](#without-home-assistant)).
 
 > [!IMPORTANT]
 > **The card alone** (installable from HACS) gives you the Map, Aircraft, Flight and SkyAware tabs, straight from
@@ -138,7 +140,8 @@ flowchart LR
 ## Requirements
 - A PiAware feeder, or any **dump1090-fa** with **SkyAware** (it serves `data/aircraft.json` with
   `Access-Control-Allow-Origin: *`). Tested with PiAware / SkyAware 11.1.
-- **Home Assistant**, for the card and for notifications (the companion app on your phone).
+- **Home Assistant**, for the card and for notifications (the companion app on your phone), **or** neither: the
+  monitor serves the dashboard itself and can send notifications through ntfy (see below).
 - For the monitor: **Node.js 22+** on any always-on Linux box (the PiAware Pi itself works), kept running by pm2
   or systemd. Raspberry Pi OS's own `nodejs` package is often older; install 22 from
   [NodeSource](https://github.com/nodesource/distributions) or with nvm. It uses ~150 MB of RAM and little CPU.
@@ -214,6 +217,22 @@ downloaded aircraft database (~8 MB, refreshed weekly) and your airport.
 
 The webhook is `local_only`, so the monitor must be on the same network as HA. It needs no HA token.
 
+## Without Home Assistant
+The monitor serves the whole dashboard on its own port: open **`http://<monitor>:7100/`** in any browser. It's the same
+card, with the few things it normally takes from Home Assistant provided by a small page in `web/` (a card frame, the
+Material Design icons it uses, light and dark colours that follow your system setting). Everything works the same:
+map, aircraft, flight, **cockpit** (the Cesium token is kept in that browser), coverage, alerts and SkyAware. On a phone,
+use your browser's **Add to Home screen**: it opens full screen like an app.
+
+- **Card options**: put any of them in the monitor's `data/card.json`, e.g. `{"title": "Planes", "rings": [25, 50,
+  100], "markers": false}`. The page points the card at the monitor itself, so `urls` and `monitor` aren't needed.
+- **Phone alerts with [ntfy](https://ntfy.sh)** instead of (or as well as) Home Assistant: install the ntfy app,
+  subscribe to a topic with a long random name (anyone who knows it can read it), and set
+  `NTFY_URL=https://ntfy.sh/<your-topic>` in the monitor's `.env` (or your own ntfy server's URL, with `NTFY_TOKEN` if
+  it needs one). Alerts arrive with their title, priority (emergency squawks highest), a tag icon and the aircraft's
+  photo; `DASHBOARD_URL=http://<monitor>:7100/` makes tapping one open the dashboard. Test it from the Alerts tab.
+- The JSON list of endpoints, formerly at `/`, is at `/api`.
+
 ## Configuration
 
 ### `.env` (monitor)
@@ -224,8 +243,11 @@ The webhook is `local_only`, so the monitor must be on the same network as HA. I
 | `LAT`, `LON` | from PiAware | Receiver position, only if you want to override PiAware's |
 | `AIRPORT` | none | ICAO code of your airport for landing alerts, e.g. `KBOS`, `EGLL`. Looked up in [OurAirports](https://ourairports.com/data/) |
 | `AIRPORT_NAME`, `AIRPORT_IATA`, `AIRPORT_LAT`, `AIRPORT_LON`, `AIRPORT_ELEV` | from OurAirports | Overrides (e.g. a shorter name for notifications) |
-| `HA_WEBHOOK` | none | HA webhook URL. Empty: alerts are only logged |
-| `PORT` | `7100` | API / proxy port |
+| `HA_WEBHOOK` | none | HA webhook URL |
+| `NTFY_URL` | none | ntfy topic URL for phone alerts without HA, e.g. `https://ntfy.sh/<long-random-topic>`. With neither this nor `HA_WEBHOOK`, alerts are only logged |
+| `NTFY_TOKEN` | none | Only for a protected ntfy server or topic |
+| `DASHBOARD_URL` | none | Opened when you tap an ntfy alert, e.g. `http://192.168.1.20:7100/` |
+| `PORT` | `7100` | Dashboard, API and proxy port |
 | `MILITARY_RADIUS`, `HELI_RADIUS` | `30`, `10` | Starting alert distances (nm); then set in the card |
 | `COOLDOWN_HOURS` | `2` | Starting per-aircraft cooldown; then set in the card |
 | `OVERHEAD_RADIUS` | `3` | Starting overhead distance (nm); then set in the card |

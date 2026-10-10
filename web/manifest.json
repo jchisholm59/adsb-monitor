@@ -1,0 +1,9 @@
+{
+  "name": "Planes (adsb-monitor)",
+  "short_name": "Planes",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#1c1c1c",
+  "icons": [{ "src": "/web/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

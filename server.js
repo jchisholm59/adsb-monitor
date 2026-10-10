@@ -24,6 +24,11 @@ const PORT = num('PORT', 7100);
 const PIAWARE = env('PIAWARE', 'http://piaware.local').replace(/\/$/, '');
 const SKYAWARE = ('/' + env('SKYAWARE_PATH', '/skyaware/') + '/').replace(/\/+/g, '/');
 const HA_WEBHOOK = env('HA_WEBHOOK');
+// ntfy (https://ntfy.sh, or your own ntfy server): phone alerts without Home Assistant. NTFY_URL is the topic URL,
+// e.g. https://ntfy.sh/my-planes-7f3k; NTFY_TOKEN only for a protected server or topic. Either or both can be set.
+const NTFY_URL = env('NTFY_URL');
+const NTFY_TOKEN = env('NTFY_TOKEN');
+const DASHBOARD_URL = env('DASHBOARD_URL'); // where tapping an ntfy alert goes, e.g. http://granite:7100/
 const UA = 'adsb-monitor/1.0 (+https://github.com/jchisholm59/adsb-monitor)';
 const DATA_DIR = path.join(__dirname, 'data');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
@@ -439,17 +444,45 @@ async function send(alert) {
   alerts = alerts.slice(-200);
   writeJson(ALERTS_FILE, alerts);
   log('alert', alert.kind, alert.tag, alert.title, '|', alert.message);
-  if (!HA_WEBHOOK) return rec;
-  try {
-    const r = await fetchT(HA_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(alert) }, 8000);
-    rec.sent = r.ok;
-    if (!r.ok) log('webhook HTTP', r.status);
-  } catch (e) {
-    rec.sent = false;
-    log('webhook failed:', e.message);
-  }
+  if (!HA_WEBHOOK && !NTFY_URL) return rec;
+  const results = await Promise.all([HA_WEBHOOK && sendWebhook(alert), NTFY_URL && sendNtfy(alert)].filter(Boolean));
+  rec.sent = results.some(Boolean);
   writeJson(ALERTS_FILE, alerts);
   return rec;
+}
+
+async function sendWebhook(alert) {
+  try {
+    const r = await fetchT(HA_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(alert) }, 8000);
+    if (!r.ok) log('webhook HTTP', r.status);
+    return r.ok;
+  } catch (e) {
+    log('webhook failed:', e.message);
+    return false;
+  }
+}
+
+// ntfy's JSON publishing: POST {topic, title, message, ...} to the server's root.
+const NTFY_TAGS = { squawk: 'rotating_light', military: 'military_helmet', heli: 'helicopter', overhead: 'house', watch: 'airplane_arriving', arrival: 'airplane_arriving', test: 'white_check_mark' };
+async function sendNtfy(alert) {
+  try {
+    const u = new URL(NTFY_URL);
+    const topic = u.pathname.replace(/^\/+|\/+$/g, '');
+    const msg = {
+      topic, title: alert.title, message: alert.message || '',
+      priority: alert.kind === 'squawk' ? 5 : alert.priority === 'high' ? 4 : 3,
+      tags: [NTFY_TAGS[alert.kind] || 'airplane'],
+      ...(alert.image ? { attach: alert.image } : {}),
+      ...(DASHBOARD_URL ? { click: DASHBOARD_URL } : {}),
+    };
+    const headers = { 'Content-Type': 'application/json', ...(NTFY_TOKEN ? { Authorization: `Bearer ${NTFY_TOKEN}` } : {}) };
+    const r = await fetchT(`${u.origin}/`, { method: 'POST', headers, body: JSON.stringify(msg) }, 8000);
+    if (!r.ok) log('ntfy HTTP', r.status);
+    return r.ok;
+  } catch (e) {
+    log('ntfy failed:', e.message);
+    return false;
+  }
 }
 
 async function aircraftAlert(kind, a, overhead = false, dd = null) {
@@ -745,6 +778,18 @@ async function piawareStatus() {
   return piStatus;
 }
 
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg' };
+// Files are versioned by their modification time (index.html's __V__), so browsers pick up a new card at once.
+function sendFile(res, file) {
+  fs.readFile(file, (err, buf) => {
+    if (err) return sendJson(res, { error: 'not found' }, 404);
+    const ext = path.extname(file);
+    if (ext === '.html') buf = Buffer.from(buf.toString().replaceAll('__V__', String(Math.round(fs.statSync(path.join(__dirname, 'dist', 'skyaware-card.js')).mtimeMs))));
+    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache', ...CORS });
+    res.end(buf);
+  });
+}
+
 async function proxy(req, res, url) {
   try {
     const r = await fetchT(PIAWARE + url.pathname + url.search, {}, 8000);
@@ -768,7 +813,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/status') {
       return sendJson(res, {
         ok: !lastErr && Date.now() - lastOk < 15_000, lastPoll: lastOk, error: lastErr, aircraft: acCount, rx,
-        piaware: await piawareStatus(), webhook: !!HA_WEBHOOK, quiet: inQuiet(),
+        piaware: await piawareStatus(), webhook: !!HA_WEBHOOK, ntfy: !!NTFY_URL, quiet: inQuiet(),
         db: { military: DB.mil.size, helicopters: DB.heli.size, loadedAt: DB.loadedAt, error: DB.error },
       });
     }
@@ -801,7 +846,11 @@ const server = http.createServer(async (req, res) => {
       const rec = await send({ kind: 'test', priority: 'normal', tag: 'adsb-test', title: '✈️ ADS-B alerts are working', message: `Test from adsb-monitor at ${hhmm(Date.now())}.`, image: '' });
       return sendJson(res, rec);
     }
-    if (p === '/' || p === '/api') {
+    // The standalone dashboard: the card without Home Assistant (web/), the card itself (dist/), optional settings.
+    if (req.method === 'GET' && (p === '/' || p === '/index.html')) return sendFile(res, path.join(__dirname, 'web', 'index.html'));
+    if (req.method === 'GET' && /^\/(web|dist)\/[\w.-]+$/.test(p)) return sendFile(res, path.join(__dirname, p));
+    if (req.method === 'GET' && p === '/card-config.json') return sendJson(res, readJson(path.join(DATA_DIR, 'card.json'), {}));
+    if (p === '/api') {
       return sendJson(res, { service: 'adsb-monitor', endpoints: ['/api/status', '/api/coverage', '/api/settings', '/api/watch', '/api/alerts', '/api/classes', '/api/test-alert', SKYAWARE, '/status.json'] });
     }
     sendJson(res, { error: 'not found' }, 404);
@@ -810,7 +859,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => log(`adsb-monitor on :${PORT}, PiAware ${PIAWARE}${SKYAWARE}, webhook ${HA_WEBHOOK ? 'set' : 'NOT set'}`));
+server.listen(PORT, () => log(`adsb-monitor on :${PORT} (dashboard at /), PiAware ${PIAWARE}${SKYAWARE}, alerts: ${[HA_WEBHOOK && 'HA webhook', NTFY_URL && 'ntfy'].filter(Boolean).join(' + ') || 'none set'}`));
 setInterval(poll, POLL_MS);
 poll();
 setInterval(saveCoverage, SAVE_MS);

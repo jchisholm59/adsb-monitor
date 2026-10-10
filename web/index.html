@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Planes</title>
+  <meta name="theme-color" content="#1c1c1c">
+  <link rel="manifest" href="/web/manifest.json">
+  <link rel="icon" href="/web/icon.svg" type="image/svg+xml">
+  <style>
+    html, body { margin: 0; min-height: 100%; background: var(--page-background, #111); }
+    body { font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif; padding: 12px; box-sizing: border-box; }
+    #app { max-width: 1800px; margin: 0 auto; }
+    @media (max-width: 600px) { body { padding: 6px; } }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module">
+    import { mount } from "/web/standalone.js?v=__V__";
+    mount(document.getElementById("app"));
+  </script>
+</body>
+</html>

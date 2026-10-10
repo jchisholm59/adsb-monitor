@@ -2026,7 +2026,7 @@ class SkyAwareCard extends HTMLElement {
         <ha-icon icon="mdi:cellphone-message" style="color:var(--primary-color)"></ha-icon>
         <div style="flex:1;min-width:220px;font-size:.88em">Sticky phone notifications from <b>adsb-monitor</b>, which watches the receiver around the clock,
           through the HA automation <b>ADS-B alerts</b>. Tap one to open this tab.
-          <div class="muted">${this._monErr ? `<span class="bad">Monitor unreachable: ${esc(this._monErr)}</span>` : st ? `Monitor ${st.ok ? `<span class="good">running</span>` : `<span class="warn">not getting data</span>`} · ${st.webhook ? "webhook set" : `<span class="bad">no HA webhook</span>`} · database: ${num(st.db?.military)} military, ${num(st.db?.helicopters)} helicopters${st.quiet ? " · <b>quiet hours now</b>" : ""}` : ""}</div></div>
+          <div class="muted">${this._monErr ? `<span class="bad">Monitor unreachable: ${esc(this._monErr)}</span>` : st ? `Monitor ${st.ok ? `<span class="good">running</span>` : `<span class="warn">not getting data</span>`} · ${st.webhook || st.ntfy ? [st.webhook && "HA webhook set", st.ntfy && "ntfy set"].filter(Boolean).join(" · ") : `<span class="bad">no alert destination (HA webhook or ntfy)</span>`} · database: ${num(st.db?.military)} military, ${num(st.db?.helicopters)} helicopters${st.quiet ? " · <b>quiet hours now</b>" : ""}` : ""}</div></div>
         <button class="btn" data-act="test"><ha-icon icon="mdi:send"></ha-icon>Send a test</button>
       </div>
       <div class="grid2">
