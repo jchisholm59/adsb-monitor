@@ -27,6 +27,8 @@ Two pieces that work together:
 
 ![Chase view: WestJet 668, Calgary to Halifax on a 737 MAX 8, at 2,625 ft and 151 kt on final, with Halifax Stanfield's runways on the horizon](docs/chase.jpg)
 
+![HUD on final: Air Canada Rouge 2064, an A319 from Toronto, 4 nm out on runway 32 at Halifax Stanfield, with the flight path vector on the threshold, ILS-style glideslope and localizer diamonds (130 ft high, 0.14 nm right), speed and altitude tapes, the autopilot's selected altitude, baro setting and vertical speed](docs/hud.jpg)
+
 | Map filter | Jump to aircraft (from the list's 📍) |
 |---|---|
 | ![Map filter: chosen classes and airlines only, with counts and logos](docs/map-filter.png) | ![The map centred and zoomed on an aircraft picked from the Aircraft list](docs/locate.png) |
