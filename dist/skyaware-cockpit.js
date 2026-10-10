@@ -15,6 +15,14 @@
 const CESIUM_VERSION = "1.146";
 const CESIUM_BASE = `https://cesium.com/downloads/cesiumjs/releases/${CESIUM_VERSION}/Build/Cesium/`;
 const GOOGLE_3D_ASSET = 2275207; // Google Photorealistic 3D Tiles on Cesium ion
+// The card's resource version (?v=N), shown in the corner so a stale cached copy is easy to spot.
+const BUILD = (() => {
+  try {
+    return new URL(import.meta.url).searchParams.get("v") || "";
+  } catch (e) {
+    return "";
+  }
+})();
 
 const FT = 0.3048;
 const KT = 0.514444;
@@ -234,6 +242,7 @@ const STYLE = `
   .ck .aprinfo { position: absolute; left: 50%; top: 50px; transform: translateX(-50%); padding: 3px 10px; border: 1.5px solid #ff6ef0; border-radius: 6px; background: rgba(0,0,0,.35); color: #ffb8f6; font-size: .85em; white-space: nowrap; }
   .ck .aprinfo:empty { display: none; }
   .ck .aprinfo b { color: #fff; }
+  .ck .build { position: absolute; right: 12px; bottom: 46px; font-size: 10px; opacity: .45; }
   .ck .btns { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   .ck .btns button { font: inherit; font-size: .85em; color: #fff; background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.35); border-radius: 999px; padding: 5px 11px; cursor: pointer; }
   .ck .btns button:hover { background: rgba(255,255,255,.18); }
@@ -279,6 +288,7 @@ export class Cockpit {
           <svg class="apr" viewBox="-190 -145 380 290"></svg>
           <div class="aprinfo"></div>
           <div class="status"></div>
+          <div class="build">${BUILD ? "v" + esc(BUILD) : ""}</div>
           <div class="btns">
             <button data-ck="prev" title="Previous aircraft (by distance)">◀</button>
             <button data-ck="next" title="Next aircraft (by distance)">▶</button>
