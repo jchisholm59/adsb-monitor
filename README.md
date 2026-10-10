@@ -268,7 +268,7 @@ the internet): that gives you everything, coverage included, for *their* receive
 The monitor serves the whole dashboard on its own port: open **`http://<monitor>:7100/`** in any browser. It's the same
 card, with the few things it normally takes from Home Assistant provided by a small page in `web/` (a card frame, the
 Material Design icons it uses, light and dark colours that follow your system setting). Everything works the same:
-map, aircraft, flight, **cockpit** (the Cesium token is kept in that browser), coverage, alerts and SkyAware. On a phone,
+map, aircraft, flight, **cockpit** (the Cesium token is kept in that browser, or set `CESIUM_TOKEN`), coverage, alerts and SkyAware. On a phone,
 use your browser's **Add to Home screen**: it opens full screen like an app.
 
 - **Card options**: put any of them in the monitor's `data/card.json`, e.g. `{"title": "Planes", "rings": [25, 50,
@@ -279,6 +279,27 @@ use your browser's **Add to Home screen**: it opens full screen like an app.
   it needs one). Alerts arrive with their title, priority (emergency squawks highest), a tag icon and the aircraft's
   photo; `DASHBOARD_URL=http://<monitor>:7100/` makes tapping one open the dashboard. Test it from the Alerts tab.
 - The JSON list of endpoints, formerly at `/`, is at `/api`.
+
+### Sharing it with guests
+
+To let other people look at your dashboard without being able to change anything, set a password in the monitor's
+`.env`:
+
+```
+ADMIN_PASSWORD=pick-a-long-one
+CESIUM_TOKEN=your-cesium-ion-token   # optional: lets guests use the Cockpit view without a token of their own
+```
+
+Guests then see everything except the Alerts tab, which shows **Viewing as a guest** and a sign-in box. Signing in with
+the password unlocks it: alert settings, watched flights and test alerts. The browser (or, in the Home Assistant card, your HA
+profile) remembers you until you **Sign out**, and changing the password signs everyone out. The monitor enforces it,
+not just the page: without the sign-in token, every change request is refused, and five wrong passwords lock that
+address out for 15 minutes. With no `ADMIN_PASSWORD`, nothing changes: no sign-in, everything open, as before.
+
+- `CESIUM_TOKEN` is handed to every visitor, so create one with only `assets:read`, and add your shared address to its
+  Allowed URLs if you restrict them. Guest use counts against your Cesium ion quota.
+- To put it on the internet, use a tunnel (Cloudflare Tunnel, Tailscale Funnel) rather than opening a port on your
+  router. Don't rely on "only trust my LAN" instead of a password: through a tunnel, every visitor arrives from your LAN.
 
 ## Configuration
 
@@ -296,6 +317,9 @@ use your browser's **Add to Home screen**: it opens full screen like an app.
 | `NTFY_URL` | none | ntfy topic URL for phone alerts without HA, e.g. `https://ntfy.sh/<long-random-topic>`. With neither this nor `HA_WEBHOOK`, alerts are only logged |
 | `NTFY_TOKEN` | none | Only for a protected ntfy server or topic |
 | `DASHBOARD_URL` | none | Opened when you tap an ntfy alert, e.g. `http://192.168.1.20:7100/` |
+| `ADMIN_PASSWORD` | none | Guests can look but not change anything; sign in on the Alerts tab (see [Sharing it with guests](#sharing-it-with-guests)) |
+| `CESIUM_TOKEN` | none | Cesium ion token for the Cockpit tab, for everyone using the dashboard (and guests) |
+| `ADMIN_TRUSTED_IPS` | none | Addresses always treated as signed in (the HA add-on sets Home Assistant's ingress proxy) |
 | `PORT` | `7100` | Dashboard, API and proxy port |
 | `DATA_DIR` | `./data` | Where settings, coverage and the alert log are kept (the HA add-on uses `/data`) |
 | `MILITARY_RADIUS`, `HELI_RADIUS` | `30`, `10` | Starting alert distances (nm); then set in the card |
@@ -316,6 +340,7 @@ use your browser's **Add to Home screen**: it opens full screen like an app.
 | `map_height` | fills the screen | px |
 | `lat`, `lon` | from PiAware | Receiver position override |
 | `lookups` | `true` | `false` turns off the internet lookups (routes, aircraft details, photos) |
+| `monitor_token` | none | With `ADMIN_PASSWORD` on the monitor: easier to sign in on the Alerts tab (saved to your HA profile) |
 
 ## Data sources
 All free, keyless and CORS-enabled. Lookups are cached.
@@ -335,7 +360,7 @@ identifiers (hex, callsign) and, for route checks, aircraft positions to the ser
 ## Notes
 - **Arrival times are estimates**: distance to go divided by current ground speed. Approach and holding add a few
   minutes. Scheduled and actual times would need a paid API such as FlightAware AeroAPI.
-- The monitor has no web page of its own, only a JSON API:
+- The monitor's JSON API (the dashboard itself is at `/`):
   | | |
   |---|---|
   | `GET /api/status` | health, receiver position, PiAware status, webhook set, database counts |
@@ -345,7 +370,9 @@ identifiers (hex, callsign) and, for route checks, aircraft positions to the ser
   | `GET /api/alerts` | last 100 alerts |
   | `GET /api/classes` | military / helicopter flags (and type, registration) for the aircraft in view |
   | `POST /api/test-alert` | send a test notification |
-- Anyone who can reach the monitor's port can change its alert settings. Keep it on your LAN or VPN.
+  | `GET /api/auth`, `POST /api/login` | with `ADMIN_PASSWORD`: whether this request is signed in; `{password}` → `{token}`, sent as `Authorization: Bearer <token>` (needed for settings, watch, alerts and test alerts) |
+- Without `ADMIN_PASSWORD`, anyone who can reach the monitor's port can change its alert settings: keep it on your LAN
+  or VPN, or set one (see [Sharing it with guests](#sharing-it-with-guests)).
 
 ## License
 MIT

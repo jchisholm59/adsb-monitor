@@ -40,7 +40,9 @@ const HA_WEBHOOK = env('HA_WEBHOOK');
 // e.g. https://ntfy.sh/my-planes-7f3k; NTFY_TOKEN only for a protected server or topic. Either or both can be set.
 const NTFY_URL = env('NTFY_URL');
 const NTFY_TOKEN = env('NTFY_TOKEN');
-const DASHBOARD_URL = env('DASHBOARD_URL'); // where tapping an ntfy alert goes, e.g. http://granite:7100/
+const DASHBOARD_URL = env('DASHBOARD_URL');
+const AUTH = require('./auth')(env('ADMIN_PASSWORD'), 'adsb-monitor', env('ADMIN_TRUSTED_IPS')); // guests can look, only the owner can change
+const CESIUM_TOKEN = env('CESIUM_TOKEN'); // the Cockpit tab's token for everyone using the dashboard (and guests) // where tapping an ntfy alert goes, e.g. http://granite:7100/
 const UA = 'adsb-monitor/1.0 (+https://github.com/jchisholm59/adsb-monitor)';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data'); // the HA add-on sets /data
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
@@ -778,7 +780,7 @@ const sourceInfo = () => (AGG ? { name: AGG.name, url: AGG.home, license: AGG.li
 
 // ---- HTTP -----------------------------------------------------------------
 
-const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS', 'Access-Control-Allow-Headers': 'content-type' };
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS', 'Access-Control-Allow-Headers': 'content-type, authorization' };
 
 function sendJson(res, obj, code = 200) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...CORS });
@@ -866,6 +868,13 @@ const server = http.createServer(async (req, res) => {
       const { today: _t, ...c } = cov;
       return sendJson(res, { ...c, rx, buckets: BUCKETS, bands: BANDS.map(([b, lo, hi]) => ({ band: b, lo: Math.max(lo, 0), hi: hi > 1e8 ? null : hi })) });
     }
+    if (p === '/api/auth') return sendJson(res, AUTH.status(req));
+    if (p === '/api/login' && req.method === 'POST') {
+      const r = await AUTH.login(req, (await body(req)).password);
+      return sendJson(res, r.body, r.status);
+    }
+    // The owner's side: alert settings, watched flights, the alert history and test alerts.
+    if (/^\/api\/(settings|watch|alerts|test-alert)$/.test(p) && !AUTH.isAdmin(req)) return sendJson(res, { error: 'sign in to change alerts' }, 401);
     if (p === '/api/settings' && req.method === 'GET') return sendJson(res, settings);
     if (p === '/api/settings' && (req.method === 'PUT' || req.method === 'POST')) return sendJson(res, await updateSettings(await body(req)));
     if (p === '/api/watch' && req.method === 'POST') {
@@ -894,9 +903,9 @@ const server = http.createServer(async (req, res) => {
     // The standalone dashboard: the card without Home Assistant (web/), the card itself (dist/), optional settings.
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) return sendFile(res, path.join(__dirname, 'web', 'index.html'));
     if (req.method === 'GET' && /^\/(web|dist)\/[\w.-]+$/.test(p)) return sendFile(res, path.join(__dirname, p));
-    if (req.method === 'GET' && p === '/card-config.json') return sendJson(res, readJson(path.join(DATA_DIR, 'card.json'), {}));
+    if (req.method === 'GET' && p === '/card-config.json') return sendJson(res, { ...(CESIUM_TOKEN ? { cesium_token: CESIUM_TOKEN } : {}), ...readJson(path.join(DATA_DIR, 'card.json'), {}) });
     if (p === '/api') {
-      return sendJson(res, { service: 'adsb-monitor', endpoints: ['/api/status', '/api/coverage', '/api/settings', '/api/watch', '/api/alerts', '/api/classes', '/api/test-alert', SKYAWARE, '/status.json'] });
+      return sendJson(res, { service: 'adsb-monitor', endpoints: ['/api/status', '/api/coverage', '/api/settings', '/api/watch', '/api/alerts', '/api/classes', '/api/test-alert', '/api/auth', '/api/login', SKYAWARE, '/status.json'] });
     }
     sendJson(res, { error: 'not found' }, 404);
   } catch (e) {
@@ -904,7 +913,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => log(`adsb-monitor on :${PORT} (dashboard at /), ${AGG ? `aircraft from ${AGG.name} (${RADIUS_NM} nm around LAT/LON)` : `PiAware ${PIAWARE}${SKYAWARE}${SOURCE !== 'piaware' ? ` (unknown SOURCE=${SOURCE}: use piaware, adsb.lol or adsb.fi)` : ''}`}, alerts: ${[HA_WEBHOOK && 'HA webhook', NTFY_URL && 'ntfy'].filter(Boolean).join(' + ') || 'none set'}`));
+server.listen(PORT, () => log(`adsb-monitor on :${PORT} (dashboard at /), ${AGG ? `aircraft from ${AGG.name} (${RADIUS_NM} nm around LAT/LON)` : `PiAware ${PIAWARE}${SKYAWARE}${SOURCE !== 'piaware' ? ` (unknown SOURCE=${SOURCE}: use piaware, adsb.lol or adsb.fi)` : ''}`}, alerts: ${[HA_WEBHOOK && 'HA webhook', NTFY_URL && 'ntfy'].filter(Boolean).join(' + ') || 'none set'}, ${AUTH.required ? 'guests read-only (ADMIN_PASSWORD set)' : 'no sign-in (ADMIN_PASSWORD not set)'}`));
 setInterval(poll, POLL_MS);
 poll();
 setInterval(saveCoverage, SAVE_MS);

@@ -1,6 +1,6 @@
 {
   "name": "adsb-monitor",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Watches a PiAware receiver: coverage history, phone alerts (Home Assistant or ntfy), CORS proxy, and the SkyAware dashboard on its own or in Home Assistant",
   "main": "server.js",
   "private": true,

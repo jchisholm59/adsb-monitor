@@ -23,6 +23,7 @@ const DEFAULTS = {
   lookups: true, // routes / aircraft details / photos from the internet
   markers: true, // landmarks on the map: true (built-in), false, or a list of {name, lat, lon, sub, note} to add
   cesium_token: "", // Cesium ion token for the Cockpit tab (assets:read; restrict its Allowed URLs to your HA addresses)
+  monitor_token: "", // adsb-monitor with ADMIN_PASSWORD: its admin token (or sign in on the Alerts tab; saved to your HA profile)
 };
 
 // Built-in landmarks, drawn on the map; tap one for its note.
@@ -400,7 +401,8 @@ class SkyAwareCard extends HTMLElement {
 
   // ---- adsb-monitor --------------------------------------------------------------------------
 
-  async _mon(path, opt) {
+  async _mon(path, opt = {}) {
+    if (this._monToken) opt = { ...opt, headers: { ...opt.headers, Authorization: `Bearer ${this._monToken}` } };
     const all = this._config.monitor;
     const urls = this._monBase ? [this._monBase, ...all.filter((u) => u !== this._monBase)] : all;
     let err;
@@ -418,13 +420,21 @@ class SkyAwareCard extends HTMLElement {
     throw err || new Error("no monitor configured");
   }
 
+  // Guest or owner: with ADMIN_PASSWORD set on the monitor, only a signed-in owner gets the alert settings (and so
+  // the watch buttons). An older monitor without /api/auth is open to everyone.
+  async _loadAuth() {
+    if (this._monToken === undefined || !this._hass) this._monToken = this._config.monitor_token || (await this._pref("monitor_token"));
+    this._auth = await this._mon("/api/auth").catch((e) => (/HTTP 404/.test(e.message) ? { required: false, admin: true } : Promise.reject(e)));
+    return this._auth;
+  }
+
   async _loadMonitor() {
     try {
-      const [st, set] = await Promise.all([this._mon("/api/status"), this._mon("/api/settings")]);
+      const [st, auth] = await Promise.all([this._mon("/api/status"), this._loadAuth()]);
       this._monStatus = st;
       this._monErr = null;
-      this._settings = set;
-      if (this._tab === "alerts") this._alertsList = await this._mon("/api/alerts");
+      this._settings = auth.admin ? await this._mon("/api/settings") : null;
+      if (this._tab === "alerts" && auth.admin) this._alertsList = await this._mon("/api/alerts");
     } catch (e) {
       this._monErr = e.message || String(e);
     }
@@ -947,7 +957,7 @@ class SkyAwareCard extends HTMLElement {
         .arow .grow { flex: 1; min-width: 180px; }
         .arow .sub { font-size: .8em; color: var(--secondary-text-color); }
         .arow input[type=number] { width: 64px; } .arow input[type=time] { width: 110px; }
-        .arow input[type=number], .arow input[type=time], .arow input[type=text] { font: inherit; padding: 5px 8px; border-radius: 8px;
+        .arow input[type=number], .arow input[type=time], .arow input[type=text], .arow input[type=password] { font: inherit; padding: 5px 8px; border-radius: 8px;
           border: 1px solid var(--divider-color); background: var(--card-background-color, #fff); color: var(--primary-text-color); }
         input.tg { appearance: none; -webkit-appearance: none; width: 38px; height: 22px; border-radius: 999px; background: var(--divider-color);
           position: relative; cursor: pointer; flex: none; margin: 0; transition: background .15s; }
@@ -1080,6 +1090,7 @@ class SkyAwareCard extends HTMLElement {
     });
     this.$("alerts").addEventListener("keydown", (e) => {
       if (e.key === "Enter" && e.target.id === "watch-in") this.$("watch-add").click();
+      if (e.key === "Enter" && e.target.id === "login-pw") this._signIn(e.target.value);
     });
     this.$("cfilter").addEventListener("click", (e) => {
       const b = e.target.closest("button[data-c]");
@@ -1130,6 +1141,10 @@ class SkyAwareCard extends HTMLElement {
       } else if (act === "watch" || act === "unwatch") {
         const cs = act === "watch" && a.id === "watch-add" ? this.$("watch-in").value.trim() : a.dataset.cs;
         if (cs) this._watch(cs.toUpperCase(), act === "unwatch");
+      } else if (act === "login") {
+        this._signIn(this.$("login-pw").value);
+      } else if (act === "logout") {
+        this._signOut();
       } else if (act === "test") {
         a.disabled = true;
         this._mon("/api/test-alert", { method: "POST" }).then(() => this._loadMonitor(), () => {}).finally(() => (a.disabled = false));
@@ -1229,25 +1244,62 @@ class SkyAwareCard extends HTMLElement {
   // Cesium token: the card config's cesium_token, else the one pasted into the Cockpit tab, kept in the HA user's
   // profile (frontend user data, so every device signed in as that user has it), else in this browser.
   async _cesiumToken() {
-    if (this._config.cesium_token) return this._config.cesium_token;
+    return this._config.cesium_token || (await this._pref("cesium_token"));
+  }
+
+  async _saveCesiumToken(t) {
+    await this._setPref("cesium_token", t);
+  }
+
+  // A per-user setting (the Cesium token, the monitor's admin token): in the HA user's profile (frontend user data),
+  // else (no HA, e.g. the standalone dashboard) in this browser.
+  async _pref(k) {
     try {
       const r = await this._hass?.callWS({ type: "frontend/get_user_data", key: "skyaware-card" });
-      if (r?.value?.cesium_token) return r.value.cesium_token;
+      if (r?.value?.[k]) return r.value[k];
     } catch (e) {}
     try {
-      return localStorage.getItem("skyaware-card:cesium_token") || "";
+      return localStorage.getItem("skyaware-card:" + k) || "";
     } catch (e) {
       return "";
     }
   }
 
-  async _saveCesiumToken(t) {
+  async _setPref(k, v) {
     try {
       const r = await this._hass.callWS({ type: "frontend/get_user_data", key: "skyaware-card" });
-      await this._hass.callWS({ type: "frontend/set_user_data", key: "skyaware-card", value: { ...(r?.value || {}), cesium_token: t } });
+      await this._hass.callWS({ type: "frontend/set_user_data", key: "skyaware-card", value: { ...(r?.value || {}), [k]: v } });
     } catch (e) {
-      localStorage.setItem("skyaware-card:cesium_token", t); // no HA connection (e.g. a test page): this browser only
+      try {
+        if (v) localStorage.setItem("skyaware-card:" + k, v);
+        else localStorage.removeItem("skyaware-card:" + k);
+      } catch (e2) {}
     }
+  }
+
+  // Sign in to (or out of) the monitor: the password buys an admin token, kept like the Cesium token.
+  async _signIn(password) {
+    const err = this.$("login-err");
+    try {
+      const r = await fetch((this._monBase || this._config.monitor[0]).replace(/\/$/, "") + "/api/login", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.token) throw new Error(d.error || `HTTP ${r.status}`);
+      this._monToken = d.token;
+      await this._setPref("monitor_token", d.token);
+      await this._loadMonitor();
+      this._renderAlerts(true);
+    } catch (e) {
+      if (err) err.textContent = e.message || String(e);
+    }
+  }
+
+  async _signOut() {
+    this._monToken = "";
+    await this._setPref("monitor_token", "");
+    await this._loadMonitor();
+    this._renderAlerts(true);
   }
 
   _closeCockpit() {
@@ -2036,6 +2088,15 @@ class SkyAwareCard extends HTMLElement {
     const box = this.$("alerts");
     if (!force && box.contains(this.shadowRoot.activeElement)) return; // don't clobber typing
     const s = this._settings;
+    if (this._auth && !this._auth.admin) {
+      box.innerHTML = `<div class="panel" style="max-width:420px;margin:20px auto">
+        <h4><ha-icon icon="mdi:account-lock-outline" style="color:var(--primary-color)"></ha-icon> Viewing as a guest</h4>
+        <div class="muted" style="font-size:.88em;margin-bottom:10px">Everything else here is yours to explore. Alerts belong to whoever runs this receiver: sign in to change them.</div>
+        <div class="arow" style="border:none"><input type="password" id="login-pw" placeholder="Password" autocomplete="current-password" style="flex:1">
+          <button class="btn pri" data-act="login"><ha-icon icon="mdi:login"></ha-icon>Sign in</button></div>
+        <div class="bad" id="login-err" style="font-size:.85em"></div></div>`;
+      return;
+    }
     if (!s) {
       box.innerHTML = `<div class="empty">${this._monErr ? `Can't reach adsb-monitor (${esc(this._monErr)}).<br>Alerts are sent by adsb-monitor (set <code>monitor</code> in the card's configuration).` : "Loading…"}</div>`;
       return;
@@ -2052,6 +2113,7 @@ class SkyAwareCard extends HTMLElement {
           through the HA automation <b>ADS-B alerts</b>. Tap one to open this tab.
           <div class="muted">${this._monErr ? `<span class="bad">Monitor unreachable: ${esc(this._monErr)}</span>` : st ? `Monitor ${st.ok ? `<span class="good">running</span>` : `<span class="warn">not getting data</span>`} · ${st.webhook || st.ntfy ? [st.webhook && "HA webhook set", st.ntfy && "ntfy set"].filter(Boolean).join(" · ") : `<span class="bad">no alert destination (HA webhook or ntfy)</span>`} · database: ${num(st.db?.military)} military, ${num(st.db?.helicopters)} helicopters${st.quiet ? " · <b>quiet hours now</b>" : ""}` : ""}</div></div>
         <button class="btn" data-act="test"><ha-icon icon="mdi:send"></ha-icon>Send a test</button>
+        ${this._auth?.required ? `<button class="btn" data-act="logout" title="Signed in as the owner"><ha-icon icon="mdi:logout"></ha-icon>Sign out</button>` : ""}
       </div>
       <div class="grid2">
         <div class="panel"><h4>Alert me about</h4>
