@@ -151,7 +151,7 @@ function csvRow(line) {
 // flat, flon (the far end) }.
 async function loadRunways(rx) {
   if (!rx || !fin(rx.lat) || !fin(rx.lon)) return [];
-  const KEY = "skyaware-card:runways2"; // 2: headings from the end coordinates
+  const KEY = "skyaware-card:runways3"; // 3: snapped onto OpenStreetMap's runway centrelines
   try {
     const c = JSON.parse(localStorage.getItem(KEY) || "null");
     if (c && Date.now() - c.at < 30 * 86400000 && distNm(c.lat, c.lon, rx.lat, rx.lon) < 20) return c.ends;
@@ -182,9 +182,69 @@ async function loadRunways(rx) {
     }
   }
   try {
+    await snapToOsm(ends, rx);
+  } catch (e) {
+    console.warn("skyaware-cockpit: OpenStreetMap runways unavailable, using OurAirports' positions", e);
+  }
+  try {
     localStorage.setItem(KEY, JSON.stringify({ at: Date.now(), lat: rx.lat, lon: rx.lon, ends }));
   } catch (e) {}
   return ends;
+}
+
+// OurAirports' runway ends can be tens of metres off, and their bearing about a degree off (CYHZ 14/32: 1° and
+// up to 92 m, which puts the extended centreline a few hundred metres out on the approach). OpenStreetMap's runways
+// are traced from imagery, so each runway is moved onto its OSM centreline when one matches: same along-track
+// threshold position (OurAirports' threshold and displacement), OSM's line and bearing.
+const OVERPASS = "https://overpass-api.de/api/interpreter";
+async function snapToOsm(ends, rx) {
+  const q = `[out:json][timeout:90];way["aeroway"="runway"](around:${Math.round(RUNWAY_RANGE_NM * NM)},${rx.lat},${rx.lon});out geom;`;
+  const r = await fetch(OVERPASS, { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+  if (!r.ok) throw new Error("Overpass HTTP " + r.status);
+  const ways = ((await r.json()).elements || []).filter((w) => Array.isArray(w.geometry) && w.geometry.length >= 2);
+  let snapped = 0;
+  for (const e of ends) {
+    // Local flat frame (metres) around this threshold, x east, y north.
+    const k = Math.cos(toRad(e.lat)), X = (la, lo) => [(lo - e.lon) * 111320 * k, (la - e.lat) * 110540];
+    const back = ([x, y]) => ({ lat: e.lat + y / 110540, lon: e.lon + x / (111320 * k) });
+    const [fx, fy] = X(e.flat, e.flon), len = Math.hypot(fx, fy);
+    if (len < 300) continue;
+    const ux = fx / len, uy = fy / len; // along the runway, threshold -> far end
+    // OSM points of ways lying along this runway: within 200 m of OurAirports' line, within 6° of its direction.
+    const pts = [];
+    for (const w of ways) {
+      const g = w.geometry.map((n) => X(n.lat, n.lon));
+      const [a, b] = [g[0], g[g.length - 1]], wl = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (wl < 100) continue;
+      const cosang = Math.abs(((b[0] - a[0]) * ux + (b[1] - a[1]) * uy) / wl);
+      if (cosang < Math.cos(toRad(6))) continue;
+      if (g.some(([x, y]) => Math.abs(x * uy - y * ux) > 200 || x * ux + y * uy < -1500 || x * ux + y * uy > len + 1500)) continue;
+      pts.push(...g);
+    }
+    if (pts.length < 2) continue;
+    // OSM centreline: the two points farthest apart along the runway.
+    let lo = pts[0], hi = pts[0];
+    for (const p of pts) {
+      const s1 = p[0] * ux + p[1] * uy;
+      if (s1 < lo[0] * ux + lo[1] * uy) lo = p;
+      if (s1 > hi[0] * ux + hi[1] * uy) hi = p;
+    }
+    const dx = hi[0] - lo[0], dy = hi[1] - lo[1], dl = Math.hypot(dx, dy);
+    if (dl < 300) continue;
+    const vx = dx / dl, vy = dy / dl;
+    // Project the threshold and the far end onto the OSM line.
+    const proj = ([x, y]) => { const t = (x - lo[0]) * vx + (y - lo[1]) * vy; return [lo[0] + t * vx, lo[1] + t * vy]; };
+    const t2 = back(proj([0, 0])), f2 = back(proj([fx, fy]));
+    e.osmShift = Math.round(Math.hypot(...proj([0, 0]))); // metres moved, for the record
+    e.lat = +t2.lat.toFixed(6);
+    e.lon = +t2.lon.toFixed(6);
+    e.flat = +f2.lat.toFixed(6);
+    e.flon = +f2.lon.toFixed(6);
+    e.hdg = +brgDeg(e.lat, e.lon, e.flat, e.flon).toFixed(2);
+    e.src = "osm";
+    snapped++;
+  }
+  console.info(`skyaware-cockpit: ${snapped} of ${ends.length} runway ends snapped to OpenStreetMap`);
 }
 
 // Turn rate (°/s, + = right) from an aircraft's recent track reports [[tSec, track], ...]: hardly any aircraft send
