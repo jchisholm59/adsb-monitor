@@ -591,7 +591,11 @@ class SkyAwareCard extends HTMLElement {
       const cs = callsign(a);
       if (!cs || a.lat === undefined) return false;
       const c = STORE.routes.get(cs);
-      return !c || now - c.t > (c.r ? 30 : 10) * 60000;
+      if (!c) return true;
+      // A climbing aircraft whose route ends at the airport it's just left has the previous leg (adsb.im matched it on
+      // the ground there): ask again after 2 minutes rather than 30.
+      if (c.r && now - c.t > 2 * 60000 && this._leavingDest(a)) return true;
+      return now - c.t > (c.r ? 30 : 10) * 60000;
     });
     if (!want.length) return;
     try {
@@ -673,10 +677,23 @@ class SkyAwareCard extends HTMLElement {
       const direct = dist(o.lat, o.lon, d.lat, d.lon);
       const flown = ac.lat !== undefined ? dist(o.lat, o.lon, ac.lat, ac.lon) : null;
       const togo = ac.lat !== undefined ? dist(ac.lat, ac.lon, d.lat, d.lon) : null;
-      const detour = flown === null ? 0 : flown + togo - direct;
+      let detour = flown === null ? 0 : flown + togo - direct;
+      // On the ground at (or climbing out of) a stop, the leg into it and the leg out of it fit equally well: a climbing
+      // aircraft is on the leg out.
+      if (togo !== null && togo < 30 && vrate(ac) > 300) detour += 1000;
       if (!best || detour < best.detour) best = { o, d, direct, flown, togo, detour, legs: ap.length - 1, all: ap, plausible: c.r.plausible };
     }
+    // Still the leg into the airport it's climbing out of: better no route than a reversed one (until the refresh).
+    if (best && best.togo !== null && best.togo < 30 && vrate(ac) > 300) return null;
     return best;
+  }
+
+  // Climbing within 30 nm of its route's destination: that's the airport it just left, so the route is a stale leg.
+  _leavingDest(a) {
+    const c = STORE.routes.get(callsign(a));
+    if (!c?.r || a.lat === undefined || !(vrate(a) > 300)) return false;
+    const d = c.r.airports[c.r.airports.length - 1];
+    return dist(a.lat, a.lon, d.lat, d.lon) < 30;
   }
 
   // Commercial / helicopter / military / private / unclassified / unknown.
