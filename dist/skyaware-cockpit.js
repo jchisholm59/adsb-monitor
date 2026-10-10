@@ -19,8 +19,15 @@ const GOOGLE_3D_ASSET = 2275207; // Google Photorealistic 3D Tiles on Cesium ion
 const FT = 0.3048;
 const KT = 0.514444;
 const G = 9.80665;
-const HEADING_SLEW_DPS = 28;
-const ROLL_SLEW_DPS = 15;
+const HEADING_MAX_DPS = 10; // the heading eases onto the predicted track, never faster than this
+const HEADING_TAU_S = 0.6; // ... with this time constant
+const BANK_TAU_S = 1.5; // roll-in / roll-out time constant
+const BANK_MAX_DPS = 12;
+const BANK_LIMIT = 35; // airliners rarely bank past 30°
+const TURN_WINDOW_S = 6; // turn rate from the track change over about this long
+const TURN_TAU_S = 2; // then smoothed with this time constant
+const TURN_DEADBAND = 0.12; // °/s: below this it's straight flight plus noise
+const TURN_MAX = 6; // °/s
 const PITCH_SLEW_DPS = 6;
 const FORWARD_OFFSET_M = 7;
 const UP_OFFSET_M = 2.6;
@@ -171,6 +178,23 @@ async function loadRunways(rx) {
   } catch (e) {}
   return ends;
 }
+
+// Turn rate (°/s, + = right) from an aircraft's recent track reports [[tSec, track], ...]: hardly any aircraft send
+// `roll` or `track_rate` (they need a radar's Comm-B interrogation; none around CYHZ do), so the bank comes from this.
+// Uses the newest report against one ~TURN_WINDOW_S older, so the track's noise doesn't read as turning.
+export function turnRate(hist) {
+  if (!hist || hist.length < 2) return 0;
+  const [tn, kn] = hist[hist.length - 1];
+  let ref = hist[0];
+  for (const h of hist) if (tn - h[0] >= TURN_WINDOW_S) ref = h;
+  const dt = tn - ref[0];
+  if (dt < 1.5) return 0;
+  const w = (((kn - ref[1] + 540) % 360) - 180) / dt;
+  return Math.abs(w) < TURN_DEADBAND ? 0 : Math.max(-TURN_MAX, Math.min(TURN_MAX, w));
+}
+
+// The turn rate to use: the aircraft's own track_rate when it sends one, else our estimate.
+const p_turn = (a, entry) => (fin(a.track_rate) ? a.track_rate : entry?.turn || 0);
 
 function heightM(a) {
   if (a.alt_baro === "ground") return null;
@@ -432,12 +456,24 @@ export class Cockpit {
       const old = this.acs.get(a.hex);
       // Keep the receive time if the position hasn't changed, so extrapolation continues from the original fix.
       if (old && old.a.lat === a.lat && old.a.lon === a.lon && old.a.seen_pos <= a.seen_pos) old.a = a;
-      else this.acs.set(a.hex, { a, recvMs: now - (a.seen_pos || 0) * 1000 });
+      else {
+        const e = { a, recvMs: now - (a.seen_pos || 0) * 1000, hist: old?.hist || [], turn: old?.turn || 0 };
+        const t = e.recvMs / 1000, trk = fin(a.track) ? a.track : fin(a.true_heading) ? a.true_heading : null;
+        if (trk != null) {
+          if (e.hist.length && t - e.hist[e.hist.length - 1][0] > 20) e.hist = []; // a gap: start over
+          e.hist.push([t, trk]);
+          while (e.hist.length > 2 && t - e.hist[0][0] > TURN_WINDOW_S * 2) e.hist.shift();
+          const dt = old ? Math.max(0.1, t - old.recvMs / 1000) : 1;
+          e.turn += (turnRate(e.hist) - e.turn) * (1 - Math.exp(-dt / TURN_TAU_S));
+        }
+        this.acs.set(a.hex, e);
+      }
     }
     for (const hex of this.acs.keys()) if (!seen.has(hex)) this.acs.delete(hex);
     if (selHex !== this.sel) {
       this.sel = selHex;
       this.anchor = null; // re-acquire
+      this.heading = this.bank = this.fpa = null;
       this.look = { yaw: 0, pitch: 0 };
     }
   }
@@ -456,15 +492,20 @@ export class Cockpit {
     const age = Math.max(0, (nowMs - entry.recvMs) / 1000);
     const stale = age > STALE_S;
     const gs = fin(a.gs) ? a.gs * KT : 0;
-    const trk = fin(a.track) ? a.track : fin(a.true_heading) ? a.true_heading : 0;
+    const trk0 = fin(a.track) ? a.track : fin(a.true_heading) ? a.true_heading : 0;
     const t = stale ? 0 : Math.min(age, STALE_S);
+    // In a turn the track keeps coming round: predicted track now, and the chord of the arc flown since the fix
+    // (along the mean of the two tracks). The turn is capped at 45° of prediction.
+    const turn = p_turn(a, entry);
+    const dTrk = clamp(turn * t, -45, 45);
+    const trk = norm360(trk0 + dTrk), chord = norm360(trk0 + dTrk / 2);
     const d = gs * t; // metres along track (flat-earth step, fine over a few hundred m)
     const r = 6371008.8;
-    const lat = a.lat + ((d * Math.cos((trk * Math.PI) / 180)) / r) * (180 / Math.PI);
-    const lon = a.lon + ((d * Math.sin((trk * Math.PI) / 180)) / (r * Math.cos((a.lat * Math.PI) / 180))) * (180 / Math.PI);
+    const lat = a.lat + ((d * Math.cos((chord * Math.PI) / 180)) / r) * (180 / Math.PI);
+    const lon = a.lon + ((d * Math.sin((chord * Math.PI) / 180)) / (r * Math.cos((a.lat * Math.PI) / 180))) * (180 / Math.PI);
     let h = heightM(a);
     if (h != null) h += vrateMps(a) * t;
-    return { pos: C.Cartesian3.fromDegrees(lon, lat, h ?? 0, C.Ellipsoid.WGS84, out), lat, lon, h, gs, trk, stale, age, onGround: h == null };
+    return { pos: C.Cartesian3.fromDegrees(lon, lat, h ?? 0, C.Ellipsoid.WGS84, out), lat, lon, h, gs, trk, turn, stale, age, onGround: h == null };
   }
 
   // Surface height (ellipsoid metres) at a point, from the 3D tiles at full detail. scene.sampleHeight() reads
@@ -516,16 +557,26 @@ export class Cockpit {
       p.h = h;
     }
 
-    // Heading, pitch (flight-path angle), roll: slewed.
-    this.heading = this.heading == null ? p.trk : slewAngle(this.heading, p.trk, HEADING_SLEW_DPS * dt);
+    // Heading eases onto the predicted track (which itself comes round continuously in a turn).
+    if (this.heading == null) this.heading = p.trk;
+    else {
+      const dh = diffDeg(p.trk, this.heading) * (1 - Math.exp(-dt / HEADING_TAU_S));
+      this.heading = norm360(this.heading + clamp(dh, -HEADING_MAX_DPS * dt, HEADING_MAX_DPS * dt));
+    }
     const vs = vrateMps(a);
     const fpa = p.gs > 20 ? clamp((Math.atan2(vs, p.gs) * 180) / Math.PI, -12, 15) : 0;
     this.fpa = this.fpa == null ? fpa : slew(this.fpa, fpa, PITCH_SLEW_DPS * dt);
+    // Bank: the reported roll when sent (rare), else the coordinated-turn bank for this speed and turn rate:
+    // tan(bank) = v·ω / g. Eased in and out like a real roll-in.
     let bank = 0;
     if (fin(a.roll)) bank = a.roll;
-    else if (fin(a.track_rate) && p.gs > 30) bank = (Math.atan((p.gs * ((a.track_rate * Math.PI) / 180)) / G) * 180) / Math.PI;
-    bank = p.onGround ? 0 : clamp(bank, -45, 45);
-    this.bank = this.bank == null ? bank : slew(this.bank, bank, ROLL_SLEW_DPS * dt);
+    else if (p.gs > 30) bank = toDeg(Math.atan((p.gs * toRad(p.turn)) / G));
+    bank = p.onGround ? 0 : clamp(bank, -BANK_LIMIT, BANK_LIMIT);
+    if (this.bank == null) this.bank = bank;
+    else {
+      const db = (bank - this.bank) * (1 - Math.exp(-dt / BANK_TAU_S));
+      this.bank += clamp(db, -BANK_MAX_DPS * dt, BANK_MAX_DPS * dt);
+    }
 
     // Inertial anchor converging on the extrapolated position (GEV).
     if (!this.anchor) this.anchor = C.Cartesian3.clone(p.pos);
