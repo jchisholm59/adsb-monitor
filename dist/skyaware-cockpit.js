@@ -445,7 +445,8 @@ function tilesReason(e) {
   if (code === 429 || /too many/i.test(text)) return "Cesium ion is limiting requests for now";
   if (code === 404) return "the Google Photorealistic 3D Tiles asset isn't in this Cesium ion account (add it from the Asset Depot)";
   if (code === 401 || code === 403) return `Cesium ion refused it from ${location.origin} (check the token's Allowed URLs and its assets:read scope)`;
-  if (!code) return "couldn't reach Cesium ion";
+  // No status at all: the network, or a refusal without CORS headers (ion's rate limiting has been seen to answer so).
+  if (!code) return "couldn't reach Cesium ion, or it's limiting requests";
   return `Cesium ion answered HTTP ${code}${msg ? " (" + msg + ")" : ""}`;
 }
 
@@ -473,6 +474,7 @@ const STYLE = `
   .ck .alt .vs { display: block; font-size: .8em; margin-top: 2px; }
   .ck .bore { position: absolute; left: 50%; top: 50%; width: 46px; height: 14px; transform: translate(-50%, -50%); }
   .ck .status { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); padding: 6px 12px; border-radius: 8px; background: rgba(0,0,0,.55); font-size: .9em; text-align: center; }
+  .ck .status { white-space: pre-line; }
   .ck .status:empty { display: none; }
   .ck .apr { position: absolute; left: 50%; top: 50%; width: 380px; height: 290px; transform: translate(-50%, -50%); overflow: visible; }
   .ck .aprinfo { position: absolute; left: 50%; top: 50px; transform: translateX(-50%); padding: 3px 10px; border: 1.5px solid #ff6ef0; border-radius: 6px; background: rgba(0,0,0,.35); color: #ffb8f6; font-size: .85em; white-space: nowrap; }
@@ -1054,9 +1056,9 @@ export class Cockpit {
     }
     if (this.hudStyle && this.mode === "cockpit") this._drawHud(a, p, pitch, norm360(this.heading + this.look.yaw), this.bank || 0);
     const age = (now - entry.recvMs) / 1000;
-    this.$.status.textContent = age > LOST_S ? "Signal lost: holding last position"
-      : age > NOTE_S ? `Last position ${Math.round(age)} s ago${p.stale ? ": holding" : ": estimating"}`
-      : this._note || (this._rwyErr ? `Approach mode off: ${this._rwyErr}` : "");
+    // The position's age, and any note about the 3D world (tiles unavailable) on a second line.
+    const ageNote = age > LOST_S ? "Signal lost: holding last position" : age > NOTE_S ? `Last position ${Math.round(age)} s ago${p.stale ? ": holding" : ": estimating"}` : "";
+    this.$.status.textContent = [ageNote, this._note || (!ageNote && this._rwyErr ? `Approach mode off: ${this._rwyErr}` : "")].filter(Boolean).join("\n");
     if (now - (this._aprMs || 0) > 500) {
       this._aprMs = now;
       this._approach = this._findApproach(a, p, now);
