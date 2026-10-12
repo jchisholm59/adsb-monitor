@@ -27,7 +27,7 @@ Two pieces that work together:
 
 ![Cockpit tab: Delta 113, Rome to Boston, an A330-300 at 36,000 ft coming in over the Nova Scotia coast on Google's photorealistic 3D tiles, with JetBlue 2260 ahead and the HUD's heading tape, ground speed and altitude](docs/cockpit.jpg)
 
-![Follow view, Side angle: Air Canada Rouge 2036, Toronto to Halifax on a 737 MAX 8, descending through 15,000 ft over Nova Scotia](docs/follow.jpg)
+![Follow view, Side angle: WestJet 43, Dublin to Halifax on a 737 MAX 8, descending through 4,950 ft over Nova Scotia, drawn with Flightradar24's 737-800 model](docs/follow.jpg)
 
 ![HUD on final: Air Canada Rouge 2064, an A319 from Toronto, 4 nm out on runway 32 at Halifax Stanfield, with the flight path vector on the threshold, ILS-style glideslope and localizer diamonds (130 ft high, 0.14 nm right), speed and altitude tapes, the autopilot's selected altitude, baro setting and vertical speed](docs/hud.jpg)
 
