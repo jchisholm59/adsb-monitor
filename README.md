@@ -179,6 +179,15 @@ cd adsb-monitor && ./install.sh
 Run `./install.sh` again any time to change those settings. **On HA OS**, use the add-on instead (see
 [Three ways to use it](#three-ways-to-use-it)).
 
+**Updating** an installed copy: don't clone again (git refuses, since the folder exists) and don't delete it
+(that throws away your settings and `data/`). Pull the new version in place and restart:
+```bash
+cd adsb-monitor && git pull && ./install.sh --yes
+```
+`.env` and `data/` aren't in git, so they're kept; `--yes` reuses your settings without asking. (By hand:
+`git pull && pm2 restart adsb-monitor`.) If `git pull` complains about local changes, you edited a tracked file:
+`git stash`, pull, then `git stash pop`.
+
 **By hand**, if you prefer:
 ```bash
 git clone https://github.com/jchisholm59/adsb-monitor.git
