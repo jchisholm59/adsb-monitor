@@ -55,6 +55,7 @@ const NOTE_S = 30; // say how old the position is after this
 const LOST_S = 120;
 const SMOOTH_DELAY_S = 3; // the card polls every 2 s, so there's nearly always a fix either side
 const ALT_FIT_S = 10; // altitude is fitted with a straight line over this many seconds of fixes (see altFit)
+const ALT_TAU_S = 2; // the shown height follows that on a critically damped spring this slow (see _frame)
 const FOLLOW_SPRING = 0.8; // rad/s: the follow camera's heading spring (critically damped: settles in ~5 s, trails a turn by 2·rate/ω)
 const ORBIT_TAU_S = 0.9; // a new camera angle eases in with this time constant
 const AUTO_TAU_S = 2.4; // ... slower in Auto
@@ -940,7 +941,7 @@ export class Cockpit {
     const lat = A.lat + P[1] / ky, lon = A.lon + P[0] / kx, h = A.h + P[2];
     const gs = Math.hypot(V[0], V[1]);
     const trk = gs > 5 ? norm360(toDeg(Math.atan2(V[0], V[1]))) : B.trk;
-    return { pos: this.C.Cartesian3.fromDegrees(lon, lat, h, this.C.Ellipsoid.WGS84, out), lat, lon, h, gs, trk, vs: V[2],
+    return { pos: this.C.Cartesian3.fromDegrees(lon, lat, h, this.C.Ellipsoid.WGS84, out), lat, lon, h, gs, trk, vs: V[2], vsFit: vA[2] + (vB[2] - vA[2]) * s,
       turn: p_turn(entry.a, entry), stale: false, age: (nowMs - entry.recvMs) / 1000, onGround: false, smooth: true };
   }
 
@@ -1019,6 +1020,21 @@ export class Cockpit {
       const h = (this._ground ?? 0) + 3;
       C.Cartesian3.fromDegrees(p.lon, p.lat, h, C.Ellipsoid.WGS84, p.pos);
       p.h = h;
+      this._vf = null;
+    } else if (p.h != null) {
+      // Height on a critically damped spring towards the curve, driven by the fitted climb rate: the curve passes
+      // through every fix, and the fixes' timing jitter (a few tenths of a second at ~9 m/s in a descent) still made
+      // it, and the pitch, wobble every 2 s. A steady climb or descent is followed with no lag.
+      const ff = p.vsFit ?? p.vs, vf = this._vf;
+      if (!vf || vf.sel !== this.sel || Math.abs(p.h - vf.h) > 150) this._vf = { sel: this.sel, h: p.h, v: ff };
+      else {
+        const w = 1 / ALT_TAU_S;
+        vf.v += (w * w * (p.h - vf.h) + 2 * w * (ff - vf.v)) * dt;
+        vf.h += vf.v * dt;
+      }
+      p.h = this._vf.h;
+      p.vs = this._vf.v;
+      C.Cartesian3.fromDegrees(p.lon, p.lat, p.h, C.Ellipsoid.WGS84, p.pos);
     }
 
     // Heading eases onto the predicted track (which itself comes round continuously in a turn).
