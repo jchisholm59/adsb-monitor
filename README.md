@@ -27,7 +27,7 @@ Two pieces that work together:
 
 ![Cockpit tab: Delta 113, Rome to Boston, an A330-300 at 36,000 ft coming in over the Nova Scotia coast on Google's photorealistic 3D tiles, with JetBlue 2260 ahead and the HUD's heading tape, ground speed and altitude](docs/cockpit.jpg)
 
-![Chase view: WestJet 668, Calgary to Halifax on a 737 MAX 8, at 2,625 ft and 151 kt on final, with Halifax Stanfield's runways on the horizon](docs/chase.jpg)
+![Follow view, Side angle: Air Canada Rouge 2036, Toronto to Halifax on a 737 MAX 8, descending through 15,000 ft over Nova Scotia](docs/follow.jpg)
 
 ![HUD on final: Air Canada Rouge 2064, an A319 from Toronto, 4 nm out on runway 32 at Halifax Stanfield, with the flight path vector on the threshold, ILS-style glideslope and localizer diamonds (130 ft high, 0.14 nm right), speed and altitude tapes, the autopilot's selected altitude, baro setting and vertical speed](docs/hud.jpg)
 
@@ -90,7 +90,10 @@ Home Assistant. Details in [Without Home Assistant](#without-home-assistant) and
   sends one, else from the turn rate worked out from its changing track, so turns onto base and final bank smoothly). Between reports it flies on at the reported speed and eases onto each new fix,
   so the view never jumps. Other traffic shows as altitude-coloured points with callsign and altitude. A HUD with
   callsign, route, type and registration, a heading tape, ground speed, altitude and vertical speed. Drag to look
-  around, wheel to zoom, **Chase view** to follow it from behind (the silhouette banks with it), ◀ ▶ to hop between aircraft. Needs a free
+  around, wheel to zoom, ◀ ▶ to hop between aircraft. **Follow view** shows the aircraft itself in 3D, as FlightRadar24's
+  3D view does: drag to circle it, wheel or pinch to zoom, **View** for Behind, Side, Front, Above or Auto (changing
+  angles), and the camera swings round behind it in turns. **Smooth** (on by default) plays it 3 s behind live along
+  its real path between position reports instead of estimating ahead. Needs a free
   [Cesium ion](https://ion.cesium.com/) token: paste it into the tab once (it's saved to your Home Assistant profile).
   Wants a decent GPU; fine on desktops and phones.
   A **HUD** style (on by default) draws it like an airliner's head-up display: horizon and pitch ladder rolling with

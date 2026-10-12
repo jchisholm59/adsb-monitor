@@ -11,6 +11,13 @@
 // a late fix never lurches the whole world. Heading is slewed at most 28°/s. It never goes below the 3D surface.
 // Unlike OpenSky, dump1090 sometimes reports `roll` (from Mode S BDS 5,0), so the view banks with the aircraft;
 // otherwise the bank is estimated from the turn rate (`track_rate`) for a coordinated turn.
+//
+// Follow view, after FlightRadar24's 3D view: a small 3D aircraft (built here, no model files) with an orbit camera
+// round it. Drag to circle it, wheel or pinch to zoom, and the View button steps through Behind, Side, Front, Above
+// and Auto (a new angle every few seconds). The camera's bearing trails the aircraft's heading on a damped spring, so
+// in a turn the aircraft swings across the view before the camera catches up.
+// Smooth (both views): the aircraft is shown SMOOTH_DELAY_S behind live, on a curve between two real fixes that
+// matches each fix's reported velocity, instead of being extrapolated ahead and corrected when the next fix lands.
 
 const CESIUM_VERSION = "1.146";
 const CESIUM_BASE = `https://cesium.com/downloads/cesiumjs/releases/${CESIUM_VERSION}/Build/Cesium/`;
@@ -44,9 +51,121 @@ const VIEW_PITCH_DEG = -4;
 const STALE_S = 60; // extrapolate up to this; older positions are held, not extrapolated
 const NOTE_S = 30; // say how old the position is after this
 const LOST_S = 120;
-const CHASE_BACK_M = 220;
-const CHASE_UP_M = 45;
-// The chased aircraft from behind: fuselage, wings with a little dihedral, tailplane and fin.
+const SMOOTH_DELAY_S = 3; // the card polls every 2 s, so there's nearly always a fix either side
+const FOLLOW_SPRING = 1.4; // rad/s: the follow camera's heading spring (critically damped, settles in ~3 s)
+const ORBIT_TAU_S = 0.9; // a new camera angle eases in with this time constant
+const AUTO_TAU_S = 2.4; // ... slower in Auto
+const AUTO_SHOT_S = 11;
+const AUTO_DRIFT_DPS = 1.5; // Auto circles slowly during a shot
+// Camera angles round the aircraft: yaw from behind (+ = round to its right), pitch down onto it, range in aircraft
+// lengths.
+const VIEWS = {
+  behind: { name: "Behind", yaw: 0, pitch: 8, range: 3.2 },
+  side: { name: "Side", yaw: 90, pitch: 4, range: 3.2 },
+  front: { name: "Front", yaw: 160, pitch: 6, range: 3.6 },
+  above: { name: "Above", yaw: 15, pitch: 58, range: 7 },
+  auto: { name: "Auto", yaw: 0, pitch: 8, range: 3.2 },
+};
+const VIEW_ORDER = ["behind", "side", "front", "above", "auto"];
+const AUTO_SHOTS = [
+  { yaw: 0, pitch: 8, range: 3.2 }, { yaw: -110, pitch: 5, range: 3 }, { yaw: 30, pitch: -7, range: 3.4 },
+  { yaw: 150, pitch: 12, range: 4.5 }, { yaw: 70, pitch: 42, range: 6 }, { yaw: -20, pitch: 18, range: 10 },
+];
+// Rough length (m) by ADS-B emitter category: light, small, large, B757, heavy, high performance, rotorcraft.
+const LENGTH_M = { A1: 9, A2: 17, A3: 38, A4: 47, A5: 64, A6: 20, A7: 15, B1: 10, B4: 9, B6: 6 };
+
+// The follow view's aircraft: a low-poly airliner (nose +X, up +Y, length 1) as a binary glTF, fin in the aircraft's
+// map colour. Flat-shaded quads and fans; each face is turned to face away from its part's centre line.
+function aircraftGlb(finColor) {
+  const pos = [], nrm = [], col = [];
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  // A convex polygon (3+ points), flipped if needed so its normal points away from `centre(faceCentre)`.
+  const face = (pts, rgb, centre) => {
+    const fc = pts.reduce((s, p) => [s[0] + p[0] / pts.length, s[1] + p[1] / pts.length, s[2] + p[2] / pts.length], [0, 0, 0]);
+    let n = cross(sub(pts[1], pts[0]), sub(pts[2], pts[0]));
+    if (dot(n, sub(fc, centre(fc))) < 0) (pts = [...pts].reverse()), (n = n.map((v) => -v));
+    const l = Math.hypot(...n) || 1;
+    n = n.map((v) => v / l);
+    for (let i = 1; i + 1 < pts.length; i++) for (const p of [pts[0], pts[i], pts[i + 1]]) pos.push(...p), nrm.push(...n), col.push(...rgb);
+  };
+  // Lofted body along X through rings [x, yCentre, radius] (radius 0 = a point), `sides`-gon cross-section.
+  const loft = (rings, sides, rgb, z = 0, y0 = 0) => {
+    const ring = ([x, yc, r]) => Array.from({ length: sides }, (_, i) => {
+      const t = (2 * Math.PI * (i + 0.5)) / sides;
+      return [x, y0 + yc + r * Math.cos(t), z + r * Math.sin(t)];
+    });
+    const rs = rings.map(ring);
+    const axis = (fc) => {
+      // Centre line at this face's x (rings are ordered nose to tail).
+      for (let k = 1; k < rings.length; k++) {
+        const [xa, ya] = rings[k - 1], [xb, yb] = rings[k];
+        if ((fc[0] - xa) * (fc[0] - xb) <= 0) return [fc[0], y0 + ya + ((yb - ya) * (fc[0] - xa)) / (xb - xa || 1), z];
+      }
+      return [fc[0], y0 + rings[0][1], z];
+    };
+    for (let k = 1; k < rs.length; k++)
+      for (let i = 0; i < sides; i++) {
+        const j = (i + 1) % sides, q = [rs[k - 1][i], rs[k - 1][j], rs[k][j], rs[k][i]];
+        if (rings[k - 1][2] === 0) face([q[1], q[2], q[3]], rgb, axis);
+        else if (rings[k][2] === 0) face([q[0], q[1], q[2]], rgb, axis);
+        else face(q, rgb, axis);
+      }
+  };
+  // A thin slab from a planform (4 points), thickened by `t` along `dir`.
+  const slab = (pl, t, dir, rgb) => {
+    const lo = pl.map((p) => p.map((v, i) => v - (dir[i] * t) / 2)), hi = pl.map((p) => p.map((v, i) => v + (dir[i] * t) / 2));
+    const c = pl.reduce((s, p) => s.map((v, i) => v + p[i] / pl.length), [0, 0, 0]);
+    const cf = () => c;
+    face(lo, rgb, cf);
+    face(hi, rgb, cf);
+    for (let i = 0; i < 4; i++) face([lo[i], lo[(i + 1) % 4], hi[(i + 1) % 4], hi[i]], rgb, cf);
+  };
+  const WHITE = [0.93, 0.94, 0.96], GREY = [0.62, 0.65, 0.7], DARK = [0.35, 0.37, 0.42];
+  const FIN = finColor || [0.1, 0.45, 0.85];
+  // Fuselage: nose to an upswept tail cone.
+  loft([[0.5, -0.01, 0], [0.485, -0.008, 0.022], [0.455, -0.004, 0.04], [0.41, 0, 0.053], [0.36, 0, 0.056], [-0.24, 0, 0.056],
+    [-0.36, 0.012, 0.045], [-0.46, 0.028, 0.022], [-0.5, 0.034, 0]], 10, WHITE);
+  for (const s of [1, -1]) {
+    // Swept wing with a little dihedral, engine under it, tailplane.
+    slab([[0.09, -0.03, 0.04 * s], [-0.13, -0.03, 0.04 * s], [-0.27, -0.002, 0.475 * s], [-0.2, -0.002, 0.475 * s]], 0.012, [0, 1, 0], GREY);
+    loft([[0.13, 0, 0.022], [0.12, 0, 0.028], [-0.02, 0, 0.025], [-0.04, 0, 0.016]], 8, DARK, 0.17 * s, -0.068);
+    slab([[-0.37, 0.025, 0.03 * s], [-0.46, 0.025, 0.03 * s], [-0.5, 0.035, 0.175 * s], [-0.455, 0.035, 0.175 * s]], 0.008, [0, 1, 0], GREY);
+  }
+  slab([[-0.33, 0.05, 0], [-0.47, 0.04, 0], [-0.505, 0.215, 0], [-0.45, 0.215, 0]], 0.009, [0, 0, 1], FIN);
+
+  // Binary glTF: one primitive (POSITION, NORMAL, COLOR_0), white material so the vertex colours show.
+  const f32 = (a) => new Float32Array(a);
+  const parts = [f32(pos), f32(nrm), f32(col)], n = pos.length / 3;
+  const mn = [0, 1, 2].map((i) => Math.min(...pos.filter((_, k) => k % 3 === i))), mx = [0, 1, 2].map((i) => Math.max(...pos.filter((_, k) => k % 3 === i)));
+  let off = 0;
+  const views = parts.map((p) => ({ buffer: 0, byteOffset: (off += p.byteLength) - p.byteLength, byteLength: p.byteLength }));
+  const json = {
+    asset: { version: "2.0", generator: "skyaware-cockpit" },
+    scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1, COLOR_0: 2 }, material: 0 }] }],
+    materials: [{ pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1], metallicFactor: 0.15, roughnessFactor: 0.5 } }],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: n, type: "VEC3", min: mn, max: mx },
+      { bufferView: 1, componentType: 5126, count: n, type: "VEC3" },
+      { bufferView: 2, componentType: 5126, count: n, type: "VEC3" },
+    ],
+    bufferViews: views, buffers: [{ byteLength: off }],
+  };
+  const js = new TextEncoder().encode(JSON.stringify(json));
+  const jl = Math.ceil(js.length / 4) * 4, bl = Math.ceil(off / 4) * 4;
+  const glb = new Uint8Array(12 + 8 + jl + 8 + bl), dv = new DataView(glb.buffer);
+  dv.setUint32(0, 0x46546c67, true), dv.setUint32(4, 2, true), dv.setUint32(8, glb.length, true);
+  dv.setUint32(12, jl, true), dv.setUint32(16, 0x4e4f534a, true);
+  glb.fill(0x20, 20, 20 + jl), glb.set(js, 20);
+  dv.setUint32(20 + jl, bl, true), dv.setUint32(24 + jl, 0x004e4942, true);
+  let o = 28 + jl;
+  for (const p of parts) glb.set(new Uint8Array(p.buffer), o), (o += p.byteLength);
+  return glb;
+}
+
+// Shown in place of the model if it can't be built: the aircraft from behind (fuselage, wings, tailplane and fin).
 const REAR_SVG = "data:image/svg+xml;base64," + btoa(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -30 120 60">
   <g fill="#e8edf5" stroke="#1b2430" stroke-width="2" stroke-linejoin="round">
     <path d="M-58,4 L-8,-1 L8,-1 L58,4 L58,7 L8,5 L-8,5 L-58,7 Z"/>
@@ -334,26 +453,67 @@ export class Cockpit {
     this.opts = opts;
     this.acs = new Map(); // hex -> { a, recvMs }
     this.sel = null;
-    this.mode = "cockpit"; // or "chase"
+    this.mode = "cockpit"; // or "chase" (the follow view)
     this.look = { yaw: 0, pitch: 0 };
     this.fov = 60;
     this.destroyed = false;
     this._listeners = [];
     this._render();
-    let hs = true;
+    const saved = (k, d) => {
+      try {
+        return localStorage.getItem("skyaware-card:" + k) ?? d;
+      } catch (e) {
+        return d;
+      }
+    };
+    this._setHudStyle(saved("hud", "1") !== "0");
+    this._setView(VIEWS[saved("view", "")] ? saved("view", "") : "behind");
+    this._setSmooth(saved("smooth", "1") !== "0");
+    this._setMode("cockpit");
+  }
+
+  _save(k, v) {
     try {
-      hs = localStorage.getItem("skyaware-card:hud") !== "0";
+      localStorage.setItem("skyaware-card:" + k, v);
     } catch (e) {}
-    this._setHudStyle(hs);
+  }
+
+  _setMode(m) {
+    this.mode = m;
+    const follow = m === "chase";
+    this.$.mode.textContent = follow ? "Cockpit view" : "Follow view";
+    this.$.viewBtn.style.display = follow ? "" : "none";
+    this.$.styleBtn.style.display = follow ? "none" : "";
+    this.$.reset.textContent = follow ? "Reset view" : "Look ahead";
+    this.look = { yaw: 0, pitch: 0 };
+    this.camHdg = null;
+    this._setHudStyle(this.hudStyle); // the HUD belongs to the cockpit view
+  }
+
+  // Follow view camera angle: a preset (eased into), or Auto.
+  _setView(v) {
+    this.view = v;
+    const t = VIEWS[v] || VIEWS.behind;
+    this.orbitT = { yaw: t.yaw, pitch: t.pitch, range: t.range };
+    if (!this.orbit) this.orbit = { ...this.orbitT };
+    this._shot = 0;
+    this._shotMs = performance.now();
+    this.$.viewBtn.textContent = "View: " + t.name;
+    this.$.viewBtn.classList.toggle("on", v === "auto");
+    this._save("view", v);
+  }
+
+  _setSmooth(on) {
+    this.smooth = !!on;
+    this.$.smoothBtn.classList.toggle("on", this.smooth);
+    this._save("smooth", this.smooth ? "1" : "0");
   }
 
   _setHudStyle(on) {
     this.hudStyle = !!on;
     this.$.ck.classList.toggle("hud-on", this.hudStyle && this.mode === "cockpit");
     this.$.styleBtn.classList.toggle("on", this.hudStyle);
-    try {
-      localStorage.setItem("skyaware-card:hud", this.hudStyle ? "1" : "0");
-    } catch (e) {}
+    this._save("hud", this.hudStyle ? "1" : "0");
   }
 
   _render() {
@@ -376,7 +536,9 @@ export class Cockpit {
             <button data-ck="prev" title="Previous aircraft (by distance)">◀</button>
             <button data-ck="next" title="Next aircraft (by distance)">▶</button>
             <button data-ck="style" title="HUD symbology, as on an airliner's head-up display">HUD</button>
-            <button data-ck="mode">Chase view</button>
+            <button data-ck="mode">Follow view</button>
+            <button data-ck="view" title="Camera angle: Behind, Side, Front, Above, or Auto (a new angle every few seconds). Drag to circle the aircraft, wheel or pinch to zoom">View: Behind</button>
+            <button data-ck="smooth" title="Smooth: show the aircraft ${SMOOTH_DELAY_S} s behind live, on its real path between position reports, instead of estimating ahead">Smooth</button>
             <button data-ck="reset" title="Look ahead again">Look ahead</button>
             <button data-ck="exit">Map</button>
           </div>
@@ -386,20 +548,19 @@ export class Cockpit {
       </div>`;
     const q = (s) => this.el.querySelector(s);
     this.$ = { hudsvg: q(".hudsvg"), ck: q(".ck"), styleBtn: q('[data-ck="style"]'), bankind: q(".bankind"), apr: q(".apr"), aprinfo: q(".aprinfo"), scene: q(".scene"), cs: q(".ident .cs"), sub: q(".ident .sub"), tape: q(".tape"), spd: q(".spd b"),
-      alt: q(".alt b"), vs: q(".alt .vs"), status: q(".status"), msg: q(".msg"), credits: q(".credits"), mode: q('[data-ck="mode"]') };
+      alt: q(".alt b"), vs: q(".alt .vs"), status: q(".status"), msg: q(".msg"), credits: q(".credits"), mode: q('[data-ck="mode"]'),
+      viewBtn: q('[data-ck="view"]'), smoothBtn: q('[data-ck="smooth"]'), reset: q('[data-ck="reset"]') };
     this._on(this.el, "click", (e) => {
       const b = e.target.closest("[data-ck]");
       if (!b) return;
       const act = b.dataset.ck;
       if (act === "exit") this.opts.onExit?.();
       else if (act === "next" || act === "prev") this._step(act === "next" ? 1 : -1);
-      else if (act === "mode") {
-        this.mode = this.mode === "cockpit" ? "chase" : "cockpit";
-        this.$.mode.textContent = this.mode === "cockpit" ? "Chase view" : "Cockpit view";
-        this.look = { yaw: 0, pitch: 0 };
-        this._setHudStyle(this.hudStyle); // the HUD belongs to the cockpit view
-      } else if (act === "style") this._setHudStyle(!this.hudStyle);
-      else if (act === "reset") (this.look = { yaw: 0, pitch: 0 }), (this.fov = 60);
+      else if (act === "mode") this._setMode(this.mode === "cockpit" ? "chase" : "cockpit");
+      else if (act === "view") this._setView(VIEW_ORDER[(VIEW_ORDER.indexOf(this.view) + 1) % VIEW_ORDER.length]);
+      else if (act === "smooth") this._setSmooth(!this.smooth);
+      else if (act === "style") this._setHudStyle(!this.hudStyle);
+      else if (act === "reset") this._resetView();
     });
   }
 
@@ -519,26 +680,71 @@ export class Cockpit {
     form.addEventListener("keydown", (e) => e.stopPropagation());
   }
 
+  _resetView() {
+    if (this.mode === "cockpit") (this.look = { yaw: 0, pitch: 0 }), (this.fov = 60);
+    else this._setView(this.view === "custom" ? "behind" : this.view);
+  }
+
+  // Cockpit: drag looks around, the wheel zooms the lens. Follow: drag circles the aircraft, the wheel or a pinch
+  // moves the camera in and out. Moving the camera by hand leaves Auto.
   _initInput() {
     const cv = this.w.canvas;
-    let drag = null;
+    const ptrs = new Map();
+    let drag = null, pinch = null;
+    const manual = () => {
+      if (this.view !== "auto") return;
+      this.view = "custom";
+      this.$.viewBtn.textContent = "View: Auto (off)";
+      this.$.viewBtn.classList.remove("on");
+    };
+    const zoom = (f) => {
+      manual();
+      this.orbitT.range = clamp(this.orbitT.range * f, 1.2, 300);
+    };
     this._on(cv, "pointerdown", (e) => {
-      drag = { x: e.clientX, y: e.clientY, yaw: this.look.yaw, pitch: this.look.pitch };
+      ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
       cv.setPointerCapture?.(e.pointerId);
+      if (ptrs.size === 2) {
+        const [p, q] = [...ptrs.values()];
+        pinch = { d: Math.hypot(p.x - q.x, p.y - q.y) || 1, range: this.orbitT.range };
+        drag = null;
+      } else if (ptrs.size === 1)
+        drag = { x: e.clientX, y: e.clientY, yaw: this.look.yaw, pitch: this.look.pitch, oyaw: this.orbit.yaw, opitch: this.orbit.pitch };
     });
     this._on(cv, "pointermove", (e) => {
+      if (!ptrs.has(e.pointerId)) return;
+      ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch && ptrs.size === 2 && this.mode !== "cockpit") {
+        const [p, q] = [...ptrs.values()];
+        manual();
+        this.orbitT.range = clamp((pinch.range * pinch.d) / (Math.hypot(p.x - q.x, p.y - q.y) || 1), 1.2, 300);
+        return;
+      }
       if (!drag) return;
-      const k = this.fov / Math.max(200, cv.clientWidth);
-      this.look.yaw = norm360(drag.yaw - (e.clientX - drag.x) * k + 180) - 180;
-      this.look.pitch = clamp(drag.pitch + (e.clientY - drag.y) * k, -80, 60);
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (this.mode === "cockpit") {
+        const k = this.fov / Math.max(200, cv.clientWidth);
+        this.look.yaw = norm360(drag.yaw - dx * k + 180) - 180;
+        this.look.pitch = clamp(drag.pitch + dy * k, -80, 60);
+      } else {
+        if (Math.abs(dx) + Math.abs(dy) > 3) manual();
+        // Straight onto the camera (no easing) while dragging.
+        this.orbitT.yaw = this.orbit.yaw = norm360(drag.oyaw - dx * 0.35 + 180) - 180;
+        this.orbitT.pitch = this.orbit.pitch = clamp(drag.opitch + dy * 0.25, -25, 85);
+      }
     });
-    const end = () => (drag = null);
+    const end = (e) => {
+      ptrs.delete(e.pointerId);
+      if (ptrs.size < 2) pinch = null;
+      if (!ptrs.size) drag = null;
+    };
     this._on(cv, "pointerup", end);
     this._on(cv, "pointercancel", end);
-    this._on(cv, "dblclick", () => (this.look = { yaw: 0, pitch: 0 }));
+    this._on(cv, "dblclick", () => this._resetView());
     this._on(cv, "wheel", (e) => {
       e.preventDefault();
-      this.fov = clamp(this.fov * Math.exp(e.deltaY * 0.001), 15, 100);
+      if (this.mode === "cockpit") this.fov = clamp(this.fov * Math.exp(e.deltaY * 0.001), 15, 100);
+      else zoom(Math.exp(e.deltaY * 0.0015));
     }, { passive: false });
   }
 
@@ -553,8 +759,13 @@ export class Cockpit {
       // Keep the receive time if the position hasn't changed, so extrapolation continues from the original fix.
       if (old && old.a.lat === a.lat && old.a.lon === a.lon && old.a.seen_pos <= a.seen_pos) old.a = a;
       else {
-        const e = { a, recvMs: now - (a.seen_pos || 0) * 1000, hist: old?.hist || [], turn: old?.turn || 0 };
+        const e = { a, recvMs: now - (a.seen_pos || 0) * 1000, hist: old?.hist || [], turn: old?.turn || 0, fixes: old?.fixes || [] };
         const t = e.recvMs / 1000, trk = fin(a.track) ? a.track : fin(a.true_heading) ? a.true_heading : null;
+        // Fixes for Smooth: the last 30 s, in time order.
+        const fx = { t: e.recvMs, lat: a.lat, lon: a.lon, h: heightM(a), gs: fin(a.gs) ? a.gs * KT : 0, trk, vs: vrateMps(a) };
+        while (e.fixes.length && e.fixes[e.fixes.length - 1].t >= fx.t) e.fixes.pop();
+        e.fixes.push(fx);
+        while (e.fixes.length > 2 && fx.t - e.fixes[0].t > 30000) e.fixes.shift();
         if (trk != null) {
           if (e.hist.length && t - e.hist[e.hist.length - 1][0] > 20) e.hist = []; // a gap: start over
           e.hist.push([t, trk]);
@@ -569,7 +780,7 @@ export class Cockpit {
     if (selHex !== this.sel) {
       this.sel = selHex;
       this.anchor = null; // re-acquire
-      this.heading = this.bank = this.fpa = null;
+      this.heading = this.bank = this.fpa = this.camHdg = null;
       this.look = { yaw: 0, pitch: 0 };
     }
   }
@@ -582,10 +793,41 @@ export class Cockpit {
     this.opts.onPick?.(next.hex);
   }
 
-  // Extrapolated position of an aircraft at time `nowMs`: Cartesian3 + speed/heading/vs used.
+  // Where to show an aircraft at `nowMs`: live, or with Smooth on, SMOOTH_DELAY_S earlier on a cubic Hermite curve
+  // between the fixes either side, matching each fix's position and reported velocity, so turns and climbs follow the
+  // flown path and nothing is ever corrected. Outside the fixes (one fix so far, a gap, on the ground): extrapolated.
+  _pos(entry, nowMs, out) {
+    if (!this.smooth) return this._project(entry, nowMs, out);
+    const tr = nowMs - SMOOTH_DELAY_S * 1000, f = entry.fixes || [];
+    let j = -1;
+    for (let k = f.length - 1; k > 0; k--)
+      if (f[k - 1].t <= tr && tr <= f[k].t) {
+        j = k;
+        break;
+      }
+    const A = f[j - 1], B = f[j];
+    if (j < 0 || A.h == null || B.h == null || A.trk == null || B.trk == null || B.t - A.t > 15000) return this._project(entry, tr, out);
+    const T = (B.t - A.t) / 1000, s = (tr - A.t) / (B.t - A.t), s2 = s * s, s3 = s2 * s;
+    const kx = 111320 * Math.cos(toRad(A.lat)), ky = 110540; // metres per degree
+    const PB = [(B.lon - A.lon) * kx, (B.lat - A.lat) * ky, B.h - A.h];
+    const vel = (F) => [F.gs * Math.sin(toRad(F.trk)), F.gs * Math.cos(toRad(F.trk)), F.vs];
+    const vA = vel(A), vB = vel(B);
+    const h10 = s3 - 2 * s2 + s, h01 = -2 * s3 + 3 * s2, h11 = s3 - s2;
+    const d10 = 3 * s2 - 4 * s + 1, d01 = -6 * s2 + 6 * s, d11 = 3 * s2 - 2 * s;
+    const P = [0, 1, 2].map((i) => h10 * T * vA[i] + h01 * PB[i] + h11 * T * vB[i]);
+    const V = [0, 1, 2].map((i) => d10 * vA[i] + (d01 * PB[i]) / T + d11 * vB[i]);
+    const lat = A.lat + P[1] / ky, lon = A.lon + P[0] / kx, h = A.h + P[2];
+    const gs = Math.hypot(V[0], V[1]);
+    const trk = gs > 5 ? norm360(toDeg(Math.atan2(V[0], V[1]))) : B.trk;
+    return { pos: this.C.Cartesian3.fromDegrees(lon, lat, h, this.C.Ellipsoid.WGS84, out), lat, lon, h, gs, trk, vs: V[2],
+      turn: p_turn(entry.a, entry), stale: false, age: (nowMs - entry.recvMs) / 1000, onGround: false, smooth: true };
+  }
+
+  // Extrapolated position of an aircraft at time `nowMs` (back in time, too, for Smooth before a second fix):
+  // Cartesian3 + speed/heading/vs used.
   _project(entry, nowMs, out) {
     const C = this.C, a = entry.a;
-    const age = Math.max(0, (nowMs - entry.recvMs) / 1000);
+    const age = Math.max(-SMOOTH_DELAY_S, (nowMs - entry.recvMs) / 1000);
     const stale = age > STALE_S;
     const gs = fin(a.gs) ? a.gs * KT : 0;
     const trk0 = fin(a.track) ? a.track : fin(a.true_heading) ? a.true_heading : 0;
@@ -601,7 +843,7 @@ export class Cockpit {
     const lon = a.lon + ((d * Math.sin((chord * Math.PI) / 180)) / (r * Math.cos((a.lat * Math.PI) / 180))) * (180 / Math.PI);
     let h = heightM(a);
     if (h != null) h += vrateMps(a) * t;
-    return { pos: C.Cartesian3.fromDegrees(lon, lat, h ?? 0, C.Ellipsoid.WGS84, out), lat, lon, h, gs, trk, turn, stale, age, onGround: h == null };
+    return { pos: C.Cartesian3.fromDegrees(lon, lat, h ?? 0, C.Ellipsoid.WGS84, out), lat, lon, h, gs, trk, vs: vrateMps(a), turn, stale, age, onGround: h == null };
   }
 
   // Surface height (ellipsoid metres) at a point, from the 3D tiles at full detail. scene.sampleHeight() reads
@@ -630,12 +872,13 @@ export class Cockpit {
     const entry = this.sel && this.acs.get(this.sel);
     if (!entry) {
       if (this.chaseBb) this.chaseBb.show = false;
+      if (this.model) this.model.show = false;
       this.$.status.textContent = this.sel ? "Aircraft out of range" : "Pick an aircraft on the map, or use ◀ ▶";
       this._hud(null);
       return;
     }
     const a = entry.a;
-    const p = this._project(entry, now, this._tmp || (this._tmp = new C.Cartesian3()));
+    const p = this._pos(entry, now, this._tmp || (this._tmp = new C.Cartesian3()));
     // Ground: aircraft on the ground (or with no altitude) sit 3 m above the sampled surface. Sampled once a second
     // (async); a sample above a flying aircraft is junk (the ground can't be over it) and is ignored.
     if (!this._groundBusy && now - (this._groundMs || 0) > 1000) {
@@ -659,7 +902,7 @@ export class Cockpit {
       const dh = diffDeg(p.trk, this.heading) * (1 - Math.exp(-dt / HEADING_TAU_S));
       this.heading = norm360(this.heading + clamp(dh, -HEADING_MAX_DPS * dt, HEADING_MAX_DPS * dt));
     }
-    const vs = vrateMps(a);
+    const vs = p.vs;
     const fpa = p.gs > 20 ? clamp((Math.atan2(vs, p.gs) * 180) / Math.PI, -12, 15) : 0;
     this.fpa = this.fpa == null ? fpa : slew(this.fpa, fpa, PITCH_SLEW_DPS * dt);
     // Bank: the reported roll when sent (rare), else the coordinated-turn bank for this speed and turn rate:
@@ -674,10 +917,15 @@ export class Cockpit {
       this.bank += clamp(db, -BANK_MAX_DPS * dt, BANK_MAX_DPS * dt);
     }
 
-    // Inertial anchor converging on the extrapolated position (GEV).
+    // Inertial anchor converging on the extrapolated position (GEV). On a Smooth curve it just follows the curve
+    // (eased over a quarter second, to hide the step when it switches between the curve and extrapolation).
     if (!this.anchor) this.anchor = C.Cartesian3.clone(p.pos);
     else if (p.stale) C.Cartesian3.clone(p.pos, this.anchor);
-    else {
+    else if (p.smooth) {
+      const corr = C.Cartesian3.subtract(p.pos, this.anchor, new C.Cartesian3());
+      if (C.Cartesian3.magnitude(corr) > 2000) C.Cartesian3.clone(p.pos, this.anchor);
+      else C.Cartesian3.add(this.anchor, C.Cartesian3.multiplyByScalar(corr, 1 - Math.exp(-dt / 0.25), corr), this.anchor);
+    } else {
       const enu = C.Transforms.eastNorthUpToFixedFrame(this.anchor, C.Ellipsoid.WGS84, this._enu || (this._enu = new C.Matrix4()));
       const hr = C.Math.toRadians(this.heading);
       const step = new C.Cartesian3(Math.sin(hr) * p.gs * dt, Math.cos(hr) * p.gs * dt, vs * dt);
@@ -691,37 +939,28 @@ export class Cockpit {
       }
     }
 
-    // Camera: cockpit = a few metres ahead and above; chase = behind and above, looking at the aircraft.
-    const enu = C.Transforms.eastNorthUpToFixedFrame(this.anchor, C.Ellipsoid.WGS84, this._enu || (this._enu = new C.Matrix4()));
-    const hr = C.Math.toRadians(this.heading);
-    const off = this.mode === "cockpit"
-      ? new C.Cartesian3(Math.sin(hr) * FORWARD_OFFSET_M, Math.cos(hr) * FORWARD_OFFSET_M, UP_OFFSET_M)
-      : new C.Cartesian3(-Math.sin(hr) * CHASE_BACK_M, -Math.cos(hr) * CHASE_BACK_M, CHASE_UP_M);
-    const cam = C.Matrix4.multiplyByPoint(enu, off, new C.Cartesian3());
-    // Never below the surface (+ clearance).
-    const cc = C.Cartographic.fromCartesian(cam);
-    if (cc && this._ground != null && cc.height < this._ground + (p.onGround ? 2 : MIN_CLEARANCE_M)) {
-      cc.height = this._ground + (p.onGround ? 2 : MIN_CLEARANCE_M);
-      C.Cartographic.toCartesian(cc, C.Ellipsoid.WGS84, cam);
+    // Camera: cockpit = a few metres ahead and above; follow = orbiting the aircraft (_followCam).
+    const follow = this.mode === "chase";
+    this.el.querySelector(".bore").style.display = follow ? "none" : "";
+    this._placeAircraft(a, follow);
+    this.w.camera.frustum.fov = C.Math.toRadians(follow ? 60 : this.fov);
+    let pitch = 0;
+    if (follow) this._followCam(dt, now, p);
+    else {
+      const enu = C.Transforms.eastNorthUpToFixedFrame(this.anchor, C.Ellipsoid.WGS84, this._enu || (this._enu = new C.Matrix4()));
+      const hr = C.Math.toRadians(this.heading);
+      const off = new C.Cartesian3(Math.sin(hr) * FORWARD_OFFSET_M, Math.cos(hr) * FORWARD_OFFSET_M, UP_OFFSET_M);
+      const cam = this._aboveGround(C.Matrix4.multiplyByPoint(enu, off, new C.Cartesian3()), p.onGround ? 2 : MIN_CLEARANCE_M);
+      pitch = VIEW_PITCH_DEG + this.fpa + this.look.pitch;
+      this.w.camera.setView({
+        destination: cam,
+        orientation: {
+          heading: C.Math.toRadians(norm360(this.heading + this.look.yaw)),
+          pitch: C.Math.toRadians(pitch),
+          roll: C.Math.toRadians(this.bank),
+        },
+      });
     }
-    const chasePitch = (-Math.atan2(CHASE_UP_M, CHASE_BACK_M) * 180) / Math.PI; // aimed straight at the aircraft
-    const pitch = (this.mode === "cockpit" ? VIEW_PITCH_DEG + this.fpa : chasePitch) + this.look.pitch;
-    // The chased aircraft is drawn where the camera follows (the smoothed anchor), banked like it.
-    this.chaseBb.show = this.mode === "chase";
-    this.el.querySelector(".bore").style.display = this.mode === "chase" ? "none" : "";
-    if (this.mode === "chase") {
-      this.chaseBb.position = this.anchor;
-      this.chaseBb.rotation = C.Math.toRadians(-(this.bank || 0));
-    }
-    this.w.camera.frustum.fov = C.Math.toRadians(this.fov);
-    this.w.camera.setView({
-      destination: cam,
-      orientation: {
-        heading: C.Math.toRadians(norm360(this.heading + this.look.yaw)),
-        pitch: C.Math.toRadians(pitch),
-        roll: C.Math.toRadians(this.mode === "cockpit" ? this.bank : 0),
-      },
-    });
     if (this.hudStyle && this.mode === "cockpit") this._drawHud(a, p, pitch, norm360(this.heading + this.look.yaw), this.bank || 0);
     const age = (now - entry.recvMs) / 1000;
     this.$.status.textContent = age > LOST_S ? "Signal lost: holding last position"
@@ -737,6 +976,95 @@ export class Cockpit {
       this._hud(a, p);
       this._hudApproach();
     }
+  }
+
+  // Lifts a camera position to at least `clear` metres over the last surface sample (in place).
+  _aboveGround(cam, clear) {
+    const C = this.C, cc = C.Cartographic.fromCartesian(cam);
+    if (cc && this._ground != null && cc.height < this._ground + clear) {
+      cc.height = this._ground + clear;
+      C.Cartographic.toCartesian(cc, C.Ellipsoid.WGS84, cam);
+    }
+    return cam;
+  }
+
+  // The follow view's aircraft at the anchor: heading, flight path angle and bank, at its rough real size. The model
+  // (fin in the aircraft's map colour) is rebuilt only when that colour changes.
+  _placeAircraft(a, show) {
+    const C = this.C;
+    if (this.model) this.model.show = false;
+    this.chaseBb.show = false;
+    if (!show) return;
+    const color = this.opts.color?.(a) || "#1f73d9";
+    if (color !== this._modelColor && !this._modelBusy && !this._modelFailed) this._loadModel(color);
+    this.size = LENGTH_M[a.category] || 38;
+    if (this.model) {
+      // Model nose is +X: Cesium's heading 0 points it east, hence heading - 90.
+      const hpr = new C.HeadingPitchRoll(C.Math.toRadians(this.heading - 90), C.Math.toRadians(this.fpa || 0), C.Math.toRadians(this.bank || 0));
+      const m = C.Transforms.headingPitchRollToFixedFrame(this.anchor, hpr, C.Ellipsoid.WGS84, undefined, this._mm || (this._mm = new C.Matrix4()));
+      this.model.modelMatrix = C.Matrix4.multiplyByUniformScale(m, this.size, m); // copied by the setter
+      this.model.show = true; // also while it loads (a hidden model isn't loaded)
+    }
+    if (!this.model?.ready) {
+      this.chaseBb.show = true;
+      this.chaseBb.position = this.anchor;
+      this.chaseBb.rotation = C.Math.toRadians(-(this.bank || 0));
+    }
+  }
+
+  async _loadModel(color) {
+    const C = this.C;
+    this._modelBusy = true;
+    const c = C.Color.fromCssColorString(color) || C.Color.fromCssColorString("#1f73d9");
+    const url = URL.createObjectURL(new Blob([aircraftGlb([c.red, c.green, c.blue])], { type: "model/gltf-binary" }));
+    try {
+      const m = await C.Model.fromGltfAsync({ url, forwardAxis: C.Axis.X, minimumPixelSize: 40, maximumScale: 20000, show: false });
+      if (this.destroyed || !this.w) return;
+      this.w.scene.primitives.add(m);
+      if (this.model) this.w.scene.primitives.remove(this.model);
+      this.model = m;
+      this._modelColor = color;
+    } catch (e) {
+      console.warn("skyaware-cockpit: aircraft model", e);
+      this._modelFailed = true;
+    } finally {
+      URL.revokeObjectURL(url);
+      this._modelBusy = false;
+    }
+  }
+
+  // Follow camera: orbits the anchor at the current angle (eased onto the target angle), its bearing trailing the
+  // aircraft's heading on a critically damped spring; aimed at the aircraft, kept clear of the ground.
+  _followCam(dt, now, p) {
+    const C = this.C;
+    if (this.camHdg == null) (this.camHdg = this.heading), (this.camHdgV = 0);
+    const w = FOLLOW_SPRING;
+    this.camHdgV += (w * w * diffDeg(this.heading, this.camHdg) - 2 * w * this.camHdgV) * dt;
+    this.camHdg = norm360(this.camHdg + this.camHdgV * dt);
+    const t = this.orbitT, o = this.orbit;
+    if (this.view === "auto") {
+      if (now - this._shotMs > AUTO_SHOT_S * 1000) {
+        this._shotMs = now;
+        this._shot = (this._shot + 1) % AUTO_SHOTS.length;
+        Object.assign(t, AUTO_SHOTS[this._shot]);
+      }
+      t.yaw = norm360(t.yaw + AUTO_DRIFT_DPS * dt + 180) - 180;
+    }
+    const k = 1 - Math.exp(-dt / (this.view === "auto" ? AUTO_TAU_S : ORBIT_TAU_S));
+    o.yaw = norm360(o.yaw + diffDeg(t.yaw, o.yaw) * k + 180) - 180;
+    o.pitch += (t.pitch - o.pitch) * k;
+    o.range *= Math.exp(Math.log(t.range / o.range) * k);
+    // On the ground, never look up from below the surface.
+    const pitch = p.onGround ? Math.max(o.pitch, 3) : o.pitch;
+    const range = o.range * (this.size || 38), b = toRad(this.camHdg + 180 - o.yaw), pr = toRad(pitch);
+    const enu = C.Transforms.eastNorthUpToFixedFrame(this.anchor, C.Ellipsoid.WGS84, this._enu || (this._enu = new C.Matrix4()));
+    const off = new C.Cartesian3(Math.sin(b) * range * Math.cos(pr), Math.cos(b) * range * Math.cos(pr), range * Math.sin(pr));
+    const cam = this._aboveGround(C.Matrix4.multiplyByPoint(enu, off, new C.Cartesian3()), p.onGround ? 2 : MIN_CLEARANCE_M);
+    const dir = C.Cartesian3.normalize(C.Cartesian3.subtract(this.anchor, cam, new C.Cartesian3()), new C.Cartesian3());
+    const surfUp = C.Ellipsoid.WGS84.geodeticSurfaceNormal(cam, new C.Cartesian3());
+    const right = C.Cartesian3.normalize(C.Cartesian3.cross(dir, surfUp, new C.Cartesian3()), new C.Cartesian3());
+    const up = C.Cartesian3.cross(right, dir, new C.Cartesian3());
+    this.w.camera.setView({ destination: cam, orientation: { direction: dir, up } });
   }
 
   // ---- approach mode ---------------------------------------------------------------------------
@@ -953,8 +1281,8 @@ export class Cockpit {
     const keep = new Set();
     for (const [hex, entry] of this.acs) {
       const isSel = hex === this.sel;
-      if (isSel) continue; // cockpit: we're in it; chase: drawn as the silhouette at the camera's anchor
-      const p = this._project(entry, now, new C.Cartesian3());
+      if (isSel) continue; // cockpit: we're in it; follow: drawn as the 3D model at the anchor
+      const p = this._pos(entry, now, new C.Cartesian3());
       if (p.onGround) continue;
       keep.add(hex);
       let m = this.marks.get(hex);
