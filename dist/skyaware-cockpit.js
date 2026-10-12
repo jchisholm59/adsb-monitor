@@ -719,7 +719,12 @@ export class Cockpit {
     const res = await C.IonResource.fromAssetId(GOOGLE_3D_ASSET, { accessToken: this._token });
     // foveatedTimeDelay 0: Cesium otherwise holds back tiles away from the screen centre until the camera has been still
     // for 0.2 s, and this camera moves with the aircraft every frame, so the ground to either side was slow to load.
-    return C.Cesium3DTileset.fromUrl(res, { cacheBytes: 768 * 1024 * 1024, enableCollision: true, asynchronouslyLoadImagery: true, foveatedTimeDelay: 0 });
+    // skipLevelOfDetail: show a coarse level first, then jump to near the final detail instead of fetching every level
+    // in between (Google's hierarchy is deep, and each level is a round trip).
+    return C.Cesium3DTileset.fromUrl(res, {
+      cacheBytes: 768 * 1024 * 1024, enableCollision: true, asynchronouslyLoadImagery: true, foveatedTimeDelay: 0,
+      skipLevelOfDetail: true, baseScreenSpaceError: 1024, skipScreenSpaceErrorFactor: 16, skipLevels: 1,
+    });
   }
 
   // The tiles didn't load: say why in the status line, and try again in 1, 2, 5, then every 10 minutes. When they do
