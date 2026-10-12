@@ -430,6 +430,25 @@ function vrateMps(a) {
   return a.alt_baro === "ground" ? 0 : fpm * FT / 60;
 }
 
+// Why Cesium ion didn't hand over the Google 3D tiles, in words. Its errors are RequestErrorEvents: an HTTP status
+// (none when ion couldn't be reached at all) and a response that's often JSON with a message.
+function tilesReason(e) {
+  const code = e?.statusCode;
+  let msg = "";
+  try {
+    msg = String(typeof e?.response === "string" ? JSON.parse(e.response).message || "" : e?.response?.message || "");
+  } catch (x) {
+    msg = String(e?.response || "");
+  }
+  const text = msg + " " + String(e?.message || "");
+  if (/quota|usage|exceeded/i.test(text)) return "this Cesium ion account's usage allowance is used up";
+  if (code === 429 || /too many/i.test(text)) return "Cesium ion is limiting requests for now";
+  if (code === 404) return "the Google Photorealistic 3D Tiles asset isn't in this Cesium ion account (add it from the Asset Depot)";
+  if (code === 401 || code === 403) return `Cesium ion refused it from ${location.origin} (check the token's Allowed URLs and its assets:read scope)`;
+  if (!code) return "couldn't reach Cesium ion";
+  return `Cesium ion answered HTTP ${code}${msg ? " (" + msg + ")" : ""}`;
+}
+
 const STYLE = `
   .ck { position: relative; width: 100%; height: min(70vh, 640px); min-height: 320px; border-radius: 12px; overflow: hidden; background: #0b1020; color: #e8f0ff; font-variant-numeric: tabular-nums; }
   .ck .scene { position: absolute; inset: 0; }
@@ -655,26 +674,27 @@ export class Cockpit {
     scene.globe.depthTestAgainstTerrain = true;
     scene.screenSpaceCameraController.enableInputs = false; // the camera is ours; drag looks around instead
     w.camera.frustum.fov = C.Math.toRadians(this.fov);
+    this._token = token;
     try {
-      const res = await C.IonResource.fromAssetId(GOOGLE_3D_ASSET, { accessToken: token });
-      if (this.destroyed) return;
-      this.tiles = await C.Cesium3DTileset.fromUrl(res, { cacheBytes: 768 * 1024 * 1024, enableCollision: true, asynchronouslyLoadImagery: true });
-      if (this.destroyed) return;
-      scene.primitives.add(this.tiles);
+      const tiles = await this._loadTiles();
+      if (this.destroyed) return void tiles.destroy();
+      this.tiles = scene.primitives.add(tiles);
       scene.globe.show = false;
     } catch (e) {
-      // No Google tiles (token scope, quota, or the asset not added to the ion account): Cesium World Terrain + imagery.
+      // No Google tiles: Cesium World Terrain + imagery meanwhile, and try the tiles again later (_tilesFailed).
       console.warn("skyaware-cockpit: Google 3D tiles unavailable, falling back to terrain", e);
       try {
         w.scene.imageryLayers.add(C.ImageryLayer.fromProviderAsync(C.IonImageryProvider.fromAssetId(2)));
         w.scene.terrainProvider = await C.createWorldTerrainAsync();
-        this._note = "Google 3D tiles unavailable on this token: showing terrain";
+        this._tilesFailed(e, "terrain");
       } catch (e2) {
-        const m = String(e2?.message || e?.message || e2 || e);
-        if (/401|403|Invalid access token|Unauthorized/i.test(m))
+        // The terrain comes from Cesium ion too, so a refused token or a rate limit stops it as well. A refused token
+        // needs a new one; anything else carries on over a plain globe until the tiles come back.
+        if ([401, 403].includes(e2?.statusCode) || /Invalid access token|Unauthorized/i.test(String(e2?.message || e2))) {
           this._askToken(`<b>Cesium ion refused the token.</b> Check it was copied whole, and that its Allowed URLs include <code>${esc(location.origin)}</code>, or paste another.`);
-        else this.$.msg.innerHTML = `<div>Couldn't load the 3D world: ${esc(m)}</div>`;
-        return;
+          return;
+        }
+        this._tilesFailed(e, "a plain globe");
       }
     }
     if (this.destroyed) return;
@@ -689,6 +709,36 @@ export class Cockpit {
     this._initInput();
     this._last = performance.now();
     this._removePre = scene.preUpdate.addEventListener(() => this._frame());
+  }
+
+  // Google's photorealistic 3D tiles, through Cesium ion. Throws Cesium's RequestErrorEvent (statusCode, response).
+  async _loadTiles() {
+    const C = this.C;
+    const res = await C.IonResource.fromAssetId(GOOGLE_3D_ASSET, { accessToken: this._token });
+    return C.Cesium3DTileset.fromUrl(res, { cacheBytes: 768 * 1024 * 1024, enableCollision: true, asynchronouslyLoadImagery: true });
+  }
+
+  // The tiles didn't load: say why in the status line, and try again in 1, 2, 5, then every 10 minutes. When they do
+  // load they replace the fallback (`showing`: what's shown meanwhile).
+  _tilesFailed(e, showing) {
+    this._tilesTry = (this._tilesTry || 0) + 1;
+    const min = [1, 2, 5][this._tilesTry - 1] || 10;
+    this._note = `Google 3D tiles unavailable: ${tilesReason(e)}. Showing ${showing}; trying again in ${min} min`;
+    clearTimeout(this._tilesTimer);
+    this._tilesTimer = setTimeout(async () => {
+      if (this.destroyed || !this.w || this.tiles) return;
+      try {
+        const tiles = await this._loadTiles();
+        if (this.destroyed || !this.w) return void tiles.destroy();
+        this.tiles = this.w.scene.primitives.add(tiles);
+        this.w.scene.globe.show = false;
+        this._note = "";
+        this._tilesTry = 0;
+      } catch (err) {
+        console.warn("skyaware-cockpit: Google 3D tiles still unavailable", err);
+        this._tilesFailed(err, showing);
+      }
+    }, min * 60000);
   }
 
   // The paste-a-token form. The card saves it to the HA user's profile (or the browser) and reopens the view.
@@ -1452,6 +1502,7 @@ export class Cockpit {
 
   destroy() {
     this.destroyed = true;
+    clearTimeout(this._tilesTimer);
     this._removePre?.();
     for (const off of this._listeners) off();
     this._listeners = [];
