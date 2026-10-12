@@ -1224,6 +1224,7 @@ class SkyAwareCard extends HTMLElement {
         color: (a) => altColor(a.alt_baro),
         receiver: this._rx,
         dest: (a) => this._route(a)?.d?.icao,
+        type: (a) => this._info(a.hex)?.icao,
         onPick: (hex) => this._select(hex),
         onExit: () => this._setTab("map"),
         label: (a) => {

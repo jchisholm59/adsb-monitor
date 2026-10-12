@@ -91,7 +91,9 @@ Home Assistant. Details in [Without Home Assistant](#without-home-assistant) and
   so the view never jumps. Other traffic shows as altitude-coloured points with callsign and altitude. A HUD with
   callsign, route, type and registration, a heading tape, ground speed, altitude and vertical speed. Drag to look
   around, wheel to zoom, ◀ ▶ to hop between aircraft. **Follow view** shows the aircraft itself in 3D, as FlightRadar24's
-  3D view does: drag to circle it, wheel or pinch to zoom, **View** for Behind, Side, Front, Above or Auto (changing
+  3D view does, using Flightradar24's own aircraft models for its type (about 35 airliners, regionals, bizjets, light
+  aircraft and a helicopter; [GPL-2.0, from FlightGear](https://github.com/Flightradar24/fr24-3d-models), loaded from
+  jsDelivr, not part of this repo): drag to circle it, wheel or pinch to zoom, **View** for Behind, Side, Front, Above or Auto (changing
   angles), and the camera swings round behind it in turns. **Smooth** (on by default) plays it 3 s behind live along
   its real path between position reports instead of estimating ahead. Needs a free
   [Cesium ion](https://ion.cesium.com/) token: paste it into the tab once (it's saved to your Home Assistant profile).

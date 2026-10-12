@@ -12,8 +12,10 @@
 // Unlike OpenSky, dump1090 sometimes reports `roll` (from Mode S BDS 5,0), so the view banks with the aircraft;
 // otherwise the bank is estimated from the turn rate (`track_rate`) for a coordinated turn.
 //
-// Follow view, after FlightRadar24's 3D view: a small 3D aircraft (built here, no model files) with an orbit camera
-// round it. Drag to circle it, wheel or pinch to zoom, and the View button steps through Behind, Side, Front, Above
+// Follow view, after FlightRadar24's 3D view: the aircraft in 3D, with an orbit camera round it. The models are
+// Flightradar24's own (github.com/Flightradar24/fr24-3d-models, from FlightGear, GPL-2.0), fetched by the browser
+// from jsDelivr at a pinned commit and chosen by ICAO type (else ADS-B category); none are copied into this repo.
+// Until one has loaded (or if it can't be), a low-poly airliner built here stands in. Drag to circle it, wheel or pinch to zoom, and the View button steps through Behind, Side, Front, Above
 // and Auto (a new angle every few seconds). The camera's bearing trails the aircraft's heading on a damped spring, so
 // in a turn the aircraft swings across the view before the camera catches up.
 // Smooth (both views): the aircraft is shown SMOOTH_DELAY_S behind live, on a curve between two real fixes that
@@ -52,7 +54,7 @@ const STALE_S = 60; // extrapolate up to this; older positions are held, not ext
 const NOTE_S = 30; // say how old the position is after this
 const LOST_S = 120;
 const SMOOTH_DELAY_S = 3; // the card polls every 2 s, so there's nearly always a fix either side
-const FOLLOW_SPRING = 1.4; // rad/s: the follow camera's heading spring (critically damped, settles in ~3 s)
+const FOLLOW_SPRING = 0.8; // rad/s: the follow camera's heading spring (critically damped: settles in ~5 s, trails a turn by 2·rate/ω)
 const ORBIT_TAU_S = 0.9; // a new camera angle eases in with this time constant
 const AUTO_TAU_S = 2.4; // ... slower in Auto
 const AUTO_SHOT_S = 11;
@@ -71,6 +73,40 @@ const AUTO_SHOTS = [
   { yaw: 0, pitch: 8, range: 3.2 }, { yaw: -110, pitch: 5, range: 3 }, { yaw: 30, pitch: -7, range: 3.4 },
   { yaw: 150, pitch: 12, range: 4.5 }, { yaw: 70, pitch: 42, range: 6 }, { yaw: -20, pitch: 18, range: 10 },
 ];
+const FR24_MODELS = "https://cdn.jsdelivr.net/gh/Flightradar24/fr24-3d-models@dd53267690c6a4ecbb290a3acf0284333a5d68a9/models/";
+const FR24_REPO = "https://github.com/Flightradar24/fr24-3d-models";
+const MODELS_KEPT = 4; // loaded models kept for switching back and forth
+// ICAO type designator -> FR24 model (nearest family member where there's no exact one). Their a318 and b736 don't
+// load in Cesium 1.146, so those types use the a319 and b737.
+const TYPE_MODEL = Object.fromEntries(Object.entries({
+  b737: "B736 B737 B37M", b738: "B738 B38M", b739: "B739 B39M B3XM",
+  b744: "B741 B742 B743 B744 B74S B74R", b748: "B748", b752: "B752", b753: "B753", b762: "B762", b763: "B763",
+  b764: "B764", b772: "B772 B77L B778", b773: "B773 B77W B779", b788: "B788", b789: "B789 B78X",
+  a319: "A318 A319 A19N", a320: "A320 A20N", a321: "A321 A21N", a332: "A332 A338", a333: "A333 A339",
+  a343: "A342 A343", a346: "A345 A346", a359: "A359 A35K", a380: "A388", beluga: "A3ST A337",
+  atr42: "AT43 AT44 AT45 AT46 AT72 AT73 AT75 AT76 B190 BE20 B350 BE9L BE99 SW4 JS31 JS32 JS41 D328 SF34 SB20 E120 F50 " +
+    "DHC6 DHC7 L410 C212 CN35", q400: "DH8A DH8B DH8C DH8D", bae146: "B461 B462 B463 RJ70 RJ85 RJ1H",
+  crj700: "CRJ1 CRJ2 CRJ7", crj900: "CRJ9 CRJX", cs100: "BCS1", cs300: "BCS3", e170: "E170 E75L E75S",
+  e190: "E190 E195 E290 E295",
+  citation: "C500 C501 C510 C525 C25A C25B C25C C25M C550 C551 C560 C56X C650 C680 C68A C700 C750 LJ35 LJ40 LJ45 LJ60 " +
+    "LJ75 CL30 CL35 CL60 GLF4 GLF5 GLF6 GL5T GL7T GLEX G280 E35L E50P E55P E545 E550 F2TH FA7X FA8X F900 PC24 HDJT BE40 PRM1",
+  pa28: "P28A P28B P28R P28T PA32 C150 C152 C170 C172 C177 C182 C206 C210 SR20 SR22 DA20 DA40 BE33 BE35 BE36 M20P C208 PC12 TBM7 TBM8 TBM9",
+  heli: "EC20 EC30 EC35 EC45 EC55 EC75 H160 AS50 AS55 AS65 AS32 B06 B407 B412 B429 B505 R22 R44 R66 S76 S92 A109 A119 " +
+    "A139 A169 A189 MD52 MD60 EH10 H47 H60 UH1",
+  ask21: "AS21 GLID",
+}).flatMap(([m, types]) => types.split(" ").map((t) => [t, m])));
+// Models whose textures come out as black, camouflage or neon patches after Cesium upgrades them from glTF 1.0: drawn
+// in plain paint instead (same shape and lighting).
+const PLAIN_MODELS = new Set(["a332", "a333", "a346", "atr42", "b744", "b762", "b764", "b773", "citation"]);
+// Every model also gets some fill light: Cesium lights models from the sun alone, so the side away from it went near
+// black (a dark livery looked like a broken texture).
+const MODEL_SHADER = (plain) => `void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
+  ${plain ? "material.diffuse = vec3(0.86, 0.88, 0.91); material.specular = vec3(0.04); material.roughness = 0.45; material.alpha = 1.0;" : ""}
+  material.emissive += material.diffuse * 0.3;
+}`;
+const CATEGORY_MODEL = { A1: "pa28", A2: "citation", A3: "b738", A4: "b752", A5: "b773", A6: "citation", A7: "heli", B1: "ask21" };
+const modelFor = (type, category) => TYPE_MODEL[String(type || "").toUpperCase()] || CATEGORY_MODEL[category] || "a320";
+
 // Rough length (m) by ADS-B emitter category: light, small, large, B757, heavy, high performance, rotorcraft.
 const LENGTH_M = { A1: 9, A2: 17, A3: 38, A4: 47, A5: 64, A6: 20, A7: 15, B1: 10, B4: 9, B6: 6 };
 
@@ -402,6 +438,8 @@ const STYLE = `
   .ck .credits img { max-height: 16px; vertical-align: middle; }
   .ck .credits a { color: inherit; }
   .ck .credits .cesium-credit-lightbox-overlay { position: fixed; }
+  .ck .mcredit { position: absolute; right: 12px; bottom: 60px; font-size: 10px; opacity: .7; }
+  .ck .mcredit a { color: inherit; }
   .ck .hud { position: absolute; inset: 0; pointer-events: none; font-family: ui-monospace, "JetBrainsMono Nerd Font", monospace; text-shadow: 0 1px 2px #000, 0 0 6px rgba(0,0,0,.6); }
   .ck .hud * { pointer-events: none; }
   .ck .hud .btns, .ck .hud .btns * , .ck .credits * { pointer-events: auto; }
@@ -447,7 +485,8 @@ const STYLE = `
 
 export class Cockpit {
   // opts: { token, saveToken(token) -> Promise, color(a) -> css colour, onPick(hex), onExit(), label(a) -> {cs, sub},
-  //         receiver {lat, lon} (for the runway list), dest(a) -> destination ICAO (preferred runway for approach mode) }
+  //         receiver {lat, lon} (for the runway list), dest(a) -> destination ICAO (preferred runway for approach mode),
+  //         type(a) -> ICAO type designator (picks the follow view's model; else a.t, sent by adsb.lol / adsb.fi) }
   constructor(container, opts) {
     this.el = container;
     this.opts = opts;
@@ -544,12 +583,13 @@ export class Cockpit {
           </div>
         </div>
         <div class="credits"></div>
+        <div class="mcredit" hidden>3D aircraft: <a href="${FR24_REPO}" target="_blank" rel="noreferrer">Flightradar24</a> / FlightGear (GPL-2.0)</div>
         <div class="msg">Loading the 3D world…</div>
       </div>`;
     const q = (s) => this.el.querySelector(s);
     this.$ = { hudsvg: q(".hudsvg"), ck: q(".ck"), styleBtn: q('[data-ck="style"]'), bankind: q(".bankind"), apr: q(".apr"), aprinfo: q(".aprinfo"), scene: q(".scene"), cs: q(".ident .cs"), sub: q(".ident .sub"), tape: q(".tape"), spd: q(".spd b"),
       alt: q(".alt b"), vs: q(".alt .vs"), status: q(".status"), msg: q(".msg"), credits: q(".credits"), mode: q('[data-ck="mode"]'),
-      viewBtn: q('[data-ck="view"]'), smoothBtn: q('[data-ck="smooth"]'), reset: q('[data-ck="reset"]') };
+      mcredit: q(".mcredit"), viewBtn: q('[data-ck="view"]'), smoothBtn: q('[data-ck="smooth"]'), reset: q('[data-ck="reset"]') };
     this._on(this.el, "click", (e) => {
       const b = e.target.closest("[data-ck]");
       if (!b) return;
@@ -643,6 +683,7 @@ export class Cockpit {
     this.chaseBb = this.bbs.add({ image: REAR_SVG, width: 132, height: 66, show: false });
     this.labels = scene.primitives.add(new C.LabelCollection());
     this.marks = new Map(); // hex -> { pt, lb }
+    this._models = new Map(); // FR24 model file -> { model, used }
     this.aprLines = scene.primitives.add(new C.PolylineCollection());
     this.$.msg.textContent = "";
     this._initInput();
@@ -988,21 +1029,38 @@ export class Cockpit {
     return cam;
   }
 
-  // The follow view's aircraft at the anchor: heading, flight path angle and bank, at its rough real size. The model
-  // (fin in the aircraft's map colour) is rebuilt only when that colour changes.
+  // The follow view's aircraft at the anchor: heading, flight path angle and bank. Flightradar24's model for its type
+  // (real size) once loaded, until then the built-in one (fin in the map colour, scaled by category), and if that
+  // isn't ready either, the flat silhouette. `this.size` (a rough length) sets the follow camera's distance.
   _placeAircraft(a, show) {
     const C = this.C;
+    for (const m of this._models.values()) if (m.model) m.model.show = false;
     if (this.model) this.model.show = false;
     this.chaseBb.show = false;
+    this.$.mcredit.hidden = true;
     if (!show) return;
+    const file = modelFor(this.opts.type?.(a) || a.t, a.category);
+    const real = this._model(file); // { model } (model null while it downloads)
+    // Model frame: heading/pitch/roll at the anchor (Cesium's heading 0 = east, hence - 90).
+    const hpr = new C.HeadingPitchRoll(C.Math.toRadians(this.heading - 90), C.Math.toRadians(this.fpa || 0), C.Math.toRadians(this.bank || 0));
+    const m = C.Transforms.headingPitchRollToFixedFrame(this.anchor, hpr, C.Ellipsoid.WGS84, undefined, this._mm || (this._mm = new C.Matrix4()));
+    if (real.model) {
+      // FR24's models face the other way (nose -X): turned round about their own vertical axis. Placed while it
+      // loads too: a hidden model isn't loaded, and an unready one isn't drawn.
+      const t = C.Matrix4.multiply(m, this._turn || (this._turn = C.Matrix4.fromRotationTranslation(C.Matrix3.fromRotationZ(Math.PI))), new C.Matrix4());
+      real.model.modelMatrix = t; // copied by the setter
+      real.model.show = true;
+      if (real.model.ready) {
+        this.size = real.model.boundingSphere.radius * 1.45; // the sphere spans wingtips and fin too: ~1.45 r is the length
+        this.$.mcredit.hidden = false;
+        return;
+      }
+    }
+    this.size = LENGTH_M[a.category] || 38;
     const color = this.opts.color?.(a) || "#1f73d9";
     if (color !== this._modelColor && !this._modelBusy && !this._modelFailed) this._loadModel(color);
-    this.size = LENGTH_M[a.category] || 38;
     if (this.model) {
-      // Model nose is +X: Cesium's heading 0 points it east, hence heading - 90.
-      const hpr = new C.HeadingPitchRoll(C.Math.toRadians(this.heading - 90), C.Math.toRadians(this.fpa || 0), C.Math.toRadians(this.bank || 0));
-      const m = C.Transforms.headingPitchRollToFixedFrame(this.anchor, hpr, C.Ellipsoid.WGS84, undefined, this._mm || (this._mm = new C.Matrix4()));
-      this.model.modelMatrix = C.Matrix4.multiplyByUniformScale(m, this.size, m); // copied by the setter
+      this.model.modelMatrix = C.Matrix4.multiplyByUniformScale(m, this.size, m);
       this.model.show = true; // also while it loads (a hidden model isn't loaded)
     }
     if (!this.model?.ready) {
@@ -1010,6 +1068,29 @@ export class Cockpit {
       this.chaseBb.position = this.anchor;
       this.chaseBb.rotation = C.Math.toRadians(-(this.bank || 0));
     }
+  }
+
+  // Flightradar24's model `file` as { model } (null until downloaded); starts loading it the first time (a failure
+  // isn't retried). The least recently used are dropped beyond MODELS_KEPT.
+  _model(file) {
+    let e = this._models.get(file);
+    if (!e) {
+      e = { model: null };
+      this._models.set(file, e);
+      this.C.Model.fromGltfAsync({ url: FR24_MODELS + file + ".glb", minimumPixelSize: 40, maximumScale: 20000 }).then((m) => {
+        if (this.destroyed || !this.w || this._models.get(file) !== e) return void m.destroy(); // gone meanwhile
+        m.customShader = new this.C.CustomShader({ lightingModel: this.C.LightingModel.PBR, fragmentShaderText: MODEL_SHADER(PLAIN_MODELS.has(file)) });
+        e.model = this.w.scene.primitives.add(m);
+      }, (err) => console.warn(`skyaware-cockpit: model ${file}`, err));
+    }
+    e.used = performance.now();
+    if (this._models.size > MODELS_KEPT) {
+      const [old] = [...this._models.entries()].filter(([f]) => f !== file).sort((p, q) => p[1].used - q[1].used)[0];
+      const o = this._models.get(old);
+      if (o.model) this.w.scene.primitives.remove(o.model); // destroys it
+      this._models.delete(old);
+    }
+    return e;
   }
 
   async _loadModel(color) {
