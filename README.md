@@ -29,6 +29,8 @@ Two pieces that work together:
 
 ![Follow view, Side angle: WestJet 43, Dublin to Halifax on a 737 MAX 8, descending through 4,950 ft over Nova Scotia, drawn with Flightradar24's 737-800 model](docs/follow.jpg)
 
+![Follow view from above: Porter 205, an Embraer E195-E2 (C-GKXK), over the lakes and woods of Nova Scotia, drawn with Flightradar24's E190 model](docs/follow-porter.jpg)
+
 ![HUD on final: Air Canada Rouge 2064, an A319 from Toronto, 4 nm out on runway 32 at Halifax Stanfield, with the flight path vector on the threshold, ILS-style glideslope and localizer diamonds (130 ft high, 0.14 nm right), speed and altitude tapes, the autopilot's selected altitude, baro setting and vertical speed](docs/hud.jpg)
 
 | Map filter | Jump to aircraft (from the list's 📍) |
