@@ -54,6 +54,7 @@ const STALE_S = 60; // extrapolate up to this; older positions are held, not ext
 const NOTE_S = 30; // say how old the position is after this
 const LOST_S = 120;
 const SMOOTH_DELAY_S = 3; // the card polls every 2 s, so there's nearly always a fix either side
+const ALT_FIT_S = 10; // altitude is fitted with a straight line over this many seconds of fixes (see altFit)
 const FOLLOW_SPRING = 0.8; // rad/s: the follow camera's heading spring (critically damped: settles in ~5 s, trails a turn by 2·rate/ω)
 const ORBIT_TAU_S = 0.9; // a new camera angle eases in with this time constant
 const AUTO_TAU_S = 2.4; // ... slower in Auto
@@ -423,6 +424,24 @@ function heightM(a) {
   if (a.alt_baro === "ground") return null;
   const ft = fin(a.alt_geom) ? a.alt_geom : fin(a.alt_baro) ? a.alt_baro : null;
   return ft == null ? null : ft * FT;
+}
+
+// ADS-B altitude comes in 25 ft (7.6 m) steps, and in level flight it often flickers between two of them
+// (38175, 38150, 38175...), and a steady descent arrives as uneven stairs; followed exactly, the aircraft bobs like
+// it's in turbulence. So each new fix's height and vertical rate are replaced by a least-squares line through the raw
+// heights of the last ALT_FIT_S seconds, evaluated at that fix: steady in level flight, an even slope in a climb.
+function altFit(fixes, fx) {
+  if (fx.hRaw == null) return;
+  const pts = fixes.filter((f) => f.hRaw != null && fx.t - f.t <= ALT_FIT_S * 1000);
+  if (pts.length < 3 || (fx.t - pts[0].t) / 1000 < 3) return;
+  const n = pts.length, mt = pts.reduce((s, f) => s + f.t / 1000, 0) / n, mh = pts.reduce((s, f) => s + f.hRaw, 0) / n;
+  let sxy = 0, sxx = 0;
+  for (const f of pts) (sxy += (f.t / 1000 - mt) * (f.hRaw - mh)), (sxx += (f.t / 1000 - mt) ** 2);
+  let slope = sxx > 0 ? sxy / sxx : 0;
+  // Less than one 25 ft step over the window (~150 fpm) is the flicker, not a climb: level, at the average.
+  if (Math.abs(slope) * ALT_FIT_S < 25 * FT) slope = 0;
+  fx.h = mh + slope * (fx.t / 1000 - mt);
+  fx.vs = slope;
 }
 
 function vrateMps(a) {
@@ -863,9 +882,11 @@ export class Cockpit {
         const t = e.recvMs / 1000, trk = fin(a.track) ? a.track : fin(a.true_heading) ? a.true_heading : null;
         // Fixes for Smooth: the last 30 s, in time order.
         const fx = { t: e.recvMs, lat: a.lat, lon: a.lon, h: heightM(a), gs: fin(a.gs) ? a.gs * KT : 0, trk, vs: vrateMps(a) };
+        fx.hRaw = fx.h;
         while (e.fixes.length && e.fixes[e.fixes.length - 1].t >= fx.t) e.fixes.pop();
         e.fixes.push(fx);
         while (e.fixes.length > 2 && fx.t - e.fixes[0].t > 30000) e.fixes.shift();
+        altFit(e.fixes, fx);
         if (trk != null) {
           if (e.hist.length && t - e.hist[e.hist.length - 1][0] > 20) e.hist = []; // a gap: start over
           e.hist.push([t, trk]);
@@ -941,9 +962,13 @@ export class Cockpit {
     const r = 6371008.8;
     const lat = a.lat + ((d * Math.cos((chord * Math.PI) / 180)) / r) * (180 / Math.PI);
     const lon = a.lon + ((d * Math.sin((chord * Math.PI) / 180)) / (r * Math.cos((a.lat * Math.PI) / 180))) * (180 / Math.PI);
-    let h = heightM(a);
-    if (h != null) h += vrateMps(a) * t;
-    return { pos: C.Cartesian3.fromDegrees(lon, lat, h ?? 0, C.Ellipsoid.WGS84, out), lat, lon, h, gs, trk, vs: vrateMps(a), turn, stale, age, onGround: h == null };
+    // The latest fix's fitted altitude and rate (altFit), when it's this position's; else the raw report.
+    const fx = entry.fixes?.[entry.fixes.length - 1];
+    const fitted = fx && fx.t === entry.recvMs && fx.h != null;
+    const vs = fitted ? fx.vs : vrateMps(a);
+    let h = fitted ? fx.h : heightM(a);
+    if (h != null) h += vs * t;
+    return { pos: C.Cartesian3.fromDegrees(lon, lat, h ?? 0, C.Ellipsoid.WGS84, out), lat, lon, h, gs, trk, vs, turn, stale, age, onGround: h == null };
   }
 
   // Surface height (ellipsoid metres) at a point, from the 3D tiles at full detail. scene.sampleHeight() reads
