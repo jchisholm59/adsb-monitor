@@ -5,6 +5,8 @@
 # 3. In adsb-monitor's .env: HA_WEBHOOK=http://<your-ha>:8123/api/webhook/YOUR_WEBHOOK_ID
 # The data block is for the Android companion app (sticky, channels, tap to open the dashboard); iOS ignores what it
 # doesn't support. Change clickAction to your dashboard's path.
+# Each push removes itself after 2 h ('timeout': 7200, done on the phone), so they can't pile up past Android's
+# ~50-notification limit, where new pushes from any automation are silently dropped.
 alias: ADS-B alerts
 description: >-
   Sticky phone alerts from adsb-monitor: emergency squawks, military aircraft and helicopters nearby, watched
@@ -21,13 +23,13 @@ actions:
   - variables:
       payload: >-
         {% set j = trigger.json %}{% set icons = {'squawk': 'mdi:alert-octagon', 'military': 'mdi:shield-airplane',
-        'heli': 'mdi:helicopter', 'watch': 'mdi:airplane-landing', 'arrival': 'mdi:airplane-landing', 'overhead': 'mdi:home-alert'} %}{% set d = {'tag': j.tag, 'sticky': 'true', 'persistent': 'true',
+        'heli': 'mdi:helicopter', 'watch': 'mdi:airplane-landing', 'arrival': 'mdi:airplane-landing', 'overhead': 'mdi:home-alert'} %}{% set d = {'tag': j.tag, 'timeout': 7200, 'sticky': 'true', 'persistent': 'true',
         'channel': 'Aircraft emergencies' if j.kind == 'squawk' else 'Aircraft alerts', 'importance': 'high', 'priority': 'high', 'ttl': 0,
         'clickAction': '/lovelace/planes', 'notification_icon': icons.get(j.kind, 'mdi:bell'),
         'actions': [{'action': 'URI', 'title': 'Open', 'uri': '/lovelace/planes'}, {'action': 'DISMISS_' ~ j.tag, 'title': 'Dismiss'}]} %}
         {% if j.image %}{% set d = dict(d, image=j.image) %}{% endif %}{{ d }}
       watch: >-
-        {% set j = trigger.json %}{% set d = {'tag': j.tag} %}{% if j.image %}{% set d = dict(d, image=j.image) %}{% endif %}{{ d }}
+        {% set j = trigger.json %}{% set d = {'tag': j.tag, 'timeout': 7200} %}{% if j.image %}{% set d = dict(d, image=j.image) %}{% endif %}{{ d }}
   # Persistent on the phone: stays until its Dismiss button is tapped (see alert-dismiss.yaml).
   - action: notify.mobile_app_YOUR_PHONE
     data:
