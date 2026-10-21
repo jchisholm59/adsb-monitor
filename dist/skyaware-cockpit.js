@@ -513,6 +513,12 @@ const STYLE = `
   .ck .btns button:hover { background: rgba(255,255,255,.18); }
   .ck .btns button.on { border-color: #7CFC9A; color: #7CFC9A; }
   .ck .btns button.on { background: var(--primary-color, #03a9f4); border-color: transparent; }
+  .ck .btns .sql { display: flex; align-items: center; gap: 6px; font-size: .85em; color: #fff; background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.35); border-radius: 999px; padding: 2px 10px; }
+  .ck .btns .sql[hidden] { display: none; }
+  .ck .btns .sql input { width: 90px; margin: 0; }
+  .ck .btns .sql b { font-weight: normal; min-width: 3.6em; }
+  .ck .btns .sql i { width: 9px; height: 9px; border-radius: 50%; background: #555; }
+  .ck .btns .sql.open i { background: #7CFC9A; box-shadow: 0 0 6px #7CFC9A; }
   .ck .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; line-height: 1.5; background: #0b1020; }
   .ck .msg > div { max-width: 560px; text-align: left; }
   .ck .msg ol { margin: 8px 0 0; padding-left: 22px; } .ck .msg li { margin: 4px 0; }
@@ -583,8 +589,14 @@ class SdrListener {
       } catch (e) {
         return;
       }
+      if (m.type === "status") {
+        const open = m.sq == null || !!m.sqOpen; // no squelch: always open
+        if (open !== this.sqOpen) (this.sqOpen = open), this.onChange("status");
+        return;
+      }
       if (m.type !== "state") return;
       this.radio = m.state;
+      this.onChange("state");
       if (!this.prev) {
         this.prev = { freq: m.state.freq, mode: m.state.mode, bw: m.state.bw };
         this.tune(this.ch);
@@ -594,6 +606,11 @@ class SdrListener {
     ws.onclose = () => {
       if (this.on && this.ws === ws) this._fail("the receiver closed the connection");
     };
+  }
+  // The squelch slider: Pi-SDR keeps it per mode (so air and marine each have their own). 0 = off.
+  setSq(db) {
+    this.sqSet = null; // the listener's own choice now: Stop leaves it
+    this._send({ cmd: "set", sq: db > 0 ? db : null });
   }
   _fail(msg) {
     this.err = msg;
@@ -692,19 +709,41 @@ export class Cockpit {
     this._setSmooth(saved("smooth", "1") !== "0");
     this._setMode("cockpit");
     if (opts.sdr?.url) {
+      // Squelch slider: shown live while dragging, sent to the receiver at most 4 times a second and on release.
+      let last = 0, timer = null;
+      const send = () => (clearTimeout(timer), (timer = null), (last = performance.now()), this.sdr.setSq(Number(this.$.sqIn.value)));
+      this._on(this.$.sqIn, "input", () => {
+        this._sqDrag = true;
+        this._sqShow(Number(this.$.sqIn.value));
+        if (performance.now() - last > 250) send();
+        else timer ??= setTimeout(send, 250);
+      });
+      this._on(this.$.sqIn, "change", () => {
+        send();
+        this._sqDrag = false;
+      });
       this.sdr = new SdrListener(opts.sdr, () => this._sdrButtons());
       this._sdrButtons();
     }
   }
 
-  _sdrButtons() {
+  _sdrButtons(kind) {
     const s = this.sdr, c = s.channel;
+    this.$.sql.hidden = !s.on;
+    this.$.sql.classList.toggle("open", s.on && !!s.sqOpen);
+    if (kind === "status") return;
+    if (!this._sqDrag && s.radio) this._sqShow(s.radio.sq ?? 0);
     this.$.listen.hidden = false;
     this.$.listen.classList.toggle("on", s.on);
     this.$.listen.textContent = s.on ? "■ Stop" : s.err ? "🎧 Listen ⚠" : "🎧 Listen";
     this.$.listen.title = s.err ? "Listen: " + s.err : "Listen to the airband on the Pi-SDR receiver (" + s.url + ")";
     this.$.chan.hidden = !s.on || s.channels.length < 2;
     if (c) this.$.chan.textContent = c.name + " " + (c.hz / 1e6).toFixed(c.hz % 1e5 ? 3 : 1);
+  }
+
+  _sqShow(v) {
+    this.$.sqIn.value = v;
+    this.$.sqVal.textContent = v ? v + " dB" : "off";
   }
 
   // Listening while the followed aircraft lands: Tower (or Approach, if still on it) -> Ground, by channel name.
@@ -789,6 +828,7 @@ export class Cockpit {
             <button data-ck="reset" title="Look ahead again">Look ahead</button>
             <button data-ck="listen" hidden></button>
             <button data-ck="chan" hidden title="Next channel"></button>
+            <label class="sql" hidden title="Squelch: how far above the noise a signal must be to be heard (0 = off). The light shows it open. Saved in Pi-SDR for this mode"><i></i>SQL <input type="range" min="0" max="40" step="1"><b></b></label>
             <button data-ck="exit">Map</button>
           </div>
         </div>
@@ -800,7 +840,7 @@ export class Cockpit {
     this.$ = { hudsvg: q(".hudsvg"), ck: q(".ck"), styleBtn: q('[data-ck="style"]'), bankind: q(".bankind"), apr: q(".apr"), aprinfo: q(".aprinfo"), scene: q(".scene"), cs: q(".ident .cs"), sub: q(".ident .sub"), tape: q(".tape"), spd: q(".spd b"),
       alt: q(".alt b"), vs: q(".alt .vs"), status: q(".status"), msg: q(".msg"), credits: q(".credits"), mode: q('[data-ck="mode"]'),
       mcredit: q(".mcredit"), viewBtn: q('[data-ck="view"]'), smoothBtn: q('[data-ck="smooth"]'), reset: q('[data-ck="reset"]'),
-      listen: q('[data-ck="listen"]'), chan: q('[data-ck="chan"]') };
+      listen: q('[data-ck="listen"]'), chan: q('[data-ck="chan"]'), sql: q(".sql"), sqIn: q(".sql input"), sqVal: q(".sql b") };
     this._on(this.el, "click", (e) => {
       const b = e.target.closest("[data-ck]");
       if (!b) return;
