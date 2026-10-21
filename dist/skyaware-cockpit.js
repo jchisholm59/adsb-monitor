@@ -531,6 +531,7 @@ const STYLE = `
 // Pi-SDR's own page. Tuning it moves the receiver for everyone; Stop puts it back where it was if nobody moved it since.
 // A page served over https can't open the ws:// of a plain-http receiver (mixed content).
 // ships-bridge.js has a copy (marine VHF, NFM): keep the two in step.
+const SQ_DEFAULT = { am: 6, nfm: 4 }; // dB above the channel noise, when the receiver has no squelch for the mode
 class SdrListener {
   constructor(cfg, onChange) {
     this.url = String(cfg.url || "").replace(/\/+$/, "");
@@ -555,6 +556,7 @@ class SdrListener {
     this.err = "";
     this.next = 0;
     this.prev = null;
+    this.sqSet = null;
     this._connect();
     this.onChange();
   }
@@ -602,7 +604,15 @@ class SdrListener {
     this.ch = ((i % this.channels.length) + this.channels.length) % this.channels.length;
     const c = this.channel;
     if (c && this.prev) {
-      if (this.radio?.mode !== c.mode) this._send({ cmd: "mode", mode: c.mode });
+      const r = this.radio || {};
+      if (r.mode !== c.mode) this._send({ cmd: "mode", mode: c.mode });
+      // Squelch: the receiver's own setting for the mode (dB above the channel noise, so it follows the noise). None
+      // there, or none saved (Pi-SDR would carry over the current mode's, e.g. FM's): set a usual one, undone by Stop.
+      const sq = r.mode === c.mode ? r.sq : r.modeSq?.[c.mode];
+      if (sq == null) {
+        this._send({ cmd: "set", sq: SQ_DEFAULT[c.mode] ?? 6 });
+        this.sqSet = c.mode;
+      }
       this._send({ cmd: "tune", freq: c.hz });
     }
     this.onChange();
@@ -613,6 +623,7 @@ class SdrListener {
     if (ws) {
       // put the receiver back, unless someone else has tuned it since
       if (this.prev && ws.readyState === 1 && this.radio?.freq === this.channel?.hz) {
+        if (this.sqSet && this.radio.mode === this.sqSet) ws.send(JSON.stringify({ cmd: "set", sq: null }));
         if (this.prev.mode !== this.radio.mode) ws.send(JSON.stringify({ cmd: "mode", mode: this.prev.mode, bw: this.prev.bw }));
         ws.send(JSON.stringify({ cmd: "tune", freq: this.prev.freq }));
       }
