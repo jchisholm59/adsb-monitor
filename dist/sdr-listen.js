@@ -93,7 +93,10 @@ export class SdrListener {
       }
       if (m.type === "watch") {
         // ended by someone else (tuned away in Pi-SDR's own page, a search...): stop listening here too
-        if (!m.on && this.w?.on) return void ((this.err = "the receiver was retuned elsewhere"), this.stop(false));
+        if (!m.on && this.w?.on) {
+          this.err = m.reason === "taken" ? "another Listen panel (other channels) took the receiver" : "the receiver was retuned elsewhere";
+          return void this.stop(false);
+        }
         this.w = m;
         this._emit("watch");
       } else if (m.type === "status") {
