@@ -23,4 +23,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --check server.js && node --check dist/skyaware-card.js
+      - run: node --check server.js && node --check dist/skyaware-card.js && node --check dist/skyaware-cockpit.js
