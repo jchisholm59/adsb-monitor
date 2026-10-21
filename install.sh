@@ -7,6 +7,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 NAME=adsb-monitor PORT_DEFAULT=7100 YES=0
 [ "${1:-}" = "--yes" ] && YES=1
+if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
+  echo "Run this as yourself (./install.sh), not with sudo: under sudo, pm2, .env and the monitor would belong to root."
+  echo "It asks for your password itself if installing pm2 needs it."
+  exit 1
+fi
+withscheme() { # withscheme VALUE [scheme]: an address typed without http:// (or the given scheme) gets it
+  if [ -z "$1" ] || [[ $1 =~ ^[A-Za-z][A-Za-z0-9+.-]*:// ]]; then printf '%s' "$1"; else printf '%s://%s' "${2:-http}" "$1"; fi
+}
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
 ask() { # ask VAR "question" default
   local var=$1 q=$2 def=${3:-} cur=${!1:-}
@@ -32,7 +40,11 @@ echo "Node $(node -v): OK"
 say "2/4 pm2"
 if ! command -v pm2 >/dev/null; then
   echo "Installing pm2 (npm i -g pm2)..."
-  npm i -g pm2 || { echo "Couldn't install pm2 globally. Try: sudo npm i -g pm2   (then run this again)"; exit 1; }
+  if ! npm i -g pm2; then
+    # A distribution's Node.js keeps global packages in a root-owned folder.
+    echo "npm can't install into its global folder as $(whoami); trying again with sudo..."
+    sudo npm i -g pm2 || { echo "Couldn't install pm2. Install it (sudo npm i -g pm2), then run this again."; exit 1; }
+  fi
 fi
 echo "pm2 $(pm2 -v 2>/dev/null | tail -1): OK"
 
@@ -64,6 +76,7 @@ if [[ "${change,,}" == y* ]] || [ ! -s .env ] || [ $YES = 1 -a ! -f .env.install
   ask NTFY_URL "ntfy topic URL for phone alerts without Home Assistant (blank: none)" "$NTFY_URL"
   ask HA_WEBHOOK "Home Assistant webhook URL for phone alerts (blank: none)" "$HA_WEBHOOK"
   ask PORT "Port for the dashboard" "${PORT:-$PORT_DEFAULT}"
+  PIAWARE=$(withscheme "$PIAWARE"); NTFY_URL=$(withscheme "$NTFY_URL" https); HA_WEBHOOK=$(withscheme "$HA_WEBHOOK")
   setenv PIAWARE "$PIAWARE"; setenv AIRPORT "$AIRPORT"; setenv NTFY_URL "$NTFY_URL"; setenv HA_WEBHOOK "$HA_WEBHOOK"; setenv PORT "$PORT"
   touch .env.installed
 fi

@@ -19,9 +19,15 @@ try {
 
 // Everything station-specific comes from .env (see .env.example).
 const env = (k, d = '') => (process.env[k] ?? '').trim() || d;
+// Addresses typed without a scheme ("192.168.1.20", "host.local:8080") get http:// (https:// for ntfy, whose
+// public server needs it), so they work either way.
+const envUrl = (k, d = '', scheme = 'http') => {
+  const v = env(k, d);
+  return v && !/^[a-z][a-z\d+.-]*:\/\//i.test(v) ? `${scheme}://${v}` : v;
+};
 const num = (k, d) => (Number.isFinite(Number(env(k))) && env(k) !== '' ? Number(env(k)) : d);
 const PORT = num('PORT', 7100);
-const PIAWARE = env('PIAWARE', 'http://piaware.local').replace(/\/$/, '');
+const PIAWARE = envUrl('PIAWARE', 'http://piaware.local').replace(/\/$/, '');
 const SKYAWARE = ('/' + env('SKYAWARE_PATH', '/skyaware/') + '/').replace(/\/+/g, '/');
 // Where aircraft come from: your own receiver (piaware, the default), or a public ADS-B aggregator for the area around
 // LAT/LON (no receiver needed). Both aggregators return readsb-format JSON ({ac: [...], now: ms}), turned into the
@@ -35,12 +41,12 @@ const AGGREGATORS = {
 const SOURCE = env('SOURCE', 'piaware').toLowerCase();
 const AGG = AGGREGATORS[SOURCE] || null;
 const RADIUS_NM = Math.max(1, Math.min(250, Number(env('RADIUS_NM', '100')) || 100));
-const HA_WEBHOOK = env('HA_WEBHOOK');
+const HA_WEBHOOK = envUrl('HA_WEBHOOK');
 // ntfy (https://ntfy.sh, or your own ntfy server): phone alerts without Home Assistant. NTFY_URL is the topic URL,
 // e.g. https://ntfy.sh/my-planes-7f3k; NTFY_TOKEN only for a protected server or topic. Either or both can be set.
-const NTFY_URL = env('NTFY_URL');
+const NTFY_URL = envUrl('NTFY_URL', '', 'https');
 const NTFY_TOKEN = env('NTFY_TOKEN');
-const DASHBOARD_URL = env('DASHBOARD_URL');
+const DASHBOARD_URL = envUrl('DASHBOARD_URL');
 const AUTH = require('./auth')(env('ADMIN_PASSWORD'), 'adsb-monitor', env('ADMIN_TRUSTED_IPS')); // guests can look, only the owner can change
 const CESIUM_TOKEN = env('CESIUM_TOKEN'); // the Cockpit tab's token for everyone using the dashboard (and guests) // where tapping an ntfy alert goes, e.g. http://granite:7100/
 const UA = 'adsb-monitor/1.0 (+https://github.com/jchisholm59/adsb-monitor)';
