@@ -206,6 +206,9 @@ const PANEL_STYLE = `
     border-radius: 8px; padding: 5px 8px; cursor: pointer; text-align: left; }
   .sdrp button:hover { background: rgba(40,40,40,.75); }
   .sdrp button.on { background: var(--primary-color, #03a9f4); border-color: transparent; }
+  .sdrp button.ch.parked { box-shadow: inset 0 0 0 1.5px var(--primary-color, #03a9f4); border-color: transparent; }
+  .sdrp .scan.waiting { animation: sdrp-wait 1.8s ease-in-out infinite; }
+  @keyframes sdrp-wait { 50% { opacity: .55; } }
   .sdrp .row { display: flex; gap: 5px; }
   .sdrp .row button { flex: 1; text-align: center; }
   .sdrp .listen { font-weight: 600; text-align: center; }
@@ -293,13 +296,20 @@ export class SdrPanel {
     $.listen.textContent = s.on ? "■ Stop" : "🎧 Listen";
     $.listen.classList.toggle("on", s.on);
     for (const x of $.live) x.hidden = !s.on;
+    // Scanning with nothing on the air: the Scan button pulses and the channel it's parked on is only outlined
+    // (Pi-SDR watches every channel at once, so there's nothing to step through); solid = playing a call, or locked.
+    const quiet = s.scanning && !s.channels.some((c, i) => c.scan && s.active(i));
     $.scan.classList.toggle("on", s.scanning);
+    $.scan.classList.toggle("waiting", quiet);
+    $.scan.title = quiet ? "Scanning: listening to every channel at once, waiting for a call" : "Scan: follow whichever channel is active (top of the list first)";
     $.lock.classList.toggle("on", s.on && !!s.w?.locked);
     $.err.hidden = !s.err;
     $.err.textContent = s.err;
     if (!this._drag && s.radio) this._sq(s.radio.sq ?? 0);
     $.ch.forEach((b, i) => {
-      b.classList.toggle("on", s.cur === i);
+      const parked = s.cur === i && s.scanning && !s.active(i);
+      b.classList.toggle("on", s.cur === i && !parked);
+      b.classList.toggle("parked", parked);
       b.querySelector(".dot").classList.toggle("lit", s.active(i));
       b.classList.toggle("noscan", !s.channels[i].scan);
     });
