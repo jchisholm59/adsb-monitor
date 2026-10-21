@@ -198,7 +198,7 @@ export class SdrListener {
 }
 
 const PANEL_STYLE = `
-  .sdrp { position: absolute; z-index: 3; display: flex; flex-direction: column; gap: 5px; width: 158px; font-size: 12.5px;
+  .sdrp { position: absolute; z-index: 3; display: flex; flex-direction: column; gap: 5px; width: 172px; font-size: 12.5px;
     color: #fff; font-variant-numeric: tabular-nums; pointer-events: auto; }
   .sdrp[data-where="map"] { top: 10px; right: 54px; }
   .sdrp[data-where="view"] { top: 54px; right: 92px; }
