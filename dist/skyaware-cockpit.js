@@ -707,11 +707,11 @@ export class Cockpit {
     if (c) this.$.chan.textContent = c.name + " " + (c.hz / 1e6).toFixed(c.hz % 1e5 ? 3 : 1);
   }
 
-  // Listening while the followed aircraft lands: Tower -> Ground (by channel name), as the pilot would.
+  // Listening while the followed aircraft lands: Tower (or Approach, if still on it) -> Ground, by channel name.
   _sdrLanding(a) {
     const s = this.sdr;
     const ground = a?.alt_baro === "ground";
-    if (s?.on && a && this._sdrHex === a.hex && this._sdrAir && ground && /tower|twr/i.test(s.channel?.name || "")) {
+    if (s?.on && a && this._sdrHex === a.hex && this._sdrAir && ground && /tower|twr|approach|app\b/i.test(s.channel?.name || "")) {
       const g = s.channels.findIndex((c) => /ground|gnd/i.test(c.name));
       if (g >= 0) s.tune(g);
     }
