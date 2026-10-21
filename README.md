@@ -361,7 +361,7 @@ address out for 15 minutes. With no `ADMIN_PASSWORD`, nothing changes: no sign-i
 | `lat`, `lon` | from PiAware | Receiver position override |
 | `lookups` | `true` | `false` turns off the internet lookups (routes, aircraft details, photos) |
 | `monitor_token` | none | With `ADMIN_PASSWORD` on the monitor: easier to sign in on the Alerts tab (saved to your HA profile) |
-| `sdr` | none | A **Listen** button on the Cockpit tab: the airband from a [Pi-SDR](https://github.com/jchisholm59/Pi-SDR) receiver, e.g. `{url: http://192.168.1.30:8073, channels: [{name: Tower, freq: 118.4}, {name: Ground, freq: 121.9}]}` (MHz, AM). The second button steps through the channels; while you follow an aircraft that lands, Tower switches to Ground. Tuning moves the receiver for everyone; Stop tunes it back. Plain-http receivers only work from an http dashboard |
+| `sdr` | none | Optional, and only for a [Pi-SDR](https://github.com/jchisholm59/Pi-SDR) receiver on your network: the card tunes it and plays its audio. Without `sdr` the button doesn't appear; other SDR software and internet streams aren't supported. A **Listen** button on the Cockpit tab: the airband from a [Pi-SDR](https://github.com/jchisholm59/Pi-SDR) receiver, e.g. `{url: http://192.168.1.30:8073, channels: [{name: Tower, freq: 118.4}, {name: Ground, freq: 121.9}]}` (MHz, AM). The second button steps through the channels; while you follow an aircraft that lands, Tower switches to Ground. Tuning moves the receiver for everyone; Stop tunes it back. Plain-http receivers only work from an http dashboard |
 
 ## Data sources
 All free, keyless and CORS-enabled. Lookups are cached.
