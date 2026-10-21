@@ -171,7 +171,7 @@ export class SdrListener {
 }
 
 const PANEL_STYLE = `
-  .sdrp { position: absolute; z-index: 3; display: flex; flex-direction: column; gap: 5px; width: 132px; font-size: 12.5px;
+  .sdrp { position: absolute; z-index: 3; display: flex; flex-direction: column; gap: 5px; width: 140px; font-size: 12.5px;
     color: #fff; font-variant-numeric: tabular-nums; pointer-events: auto; }
   .sdrp[data-where="map"] { top: 10px; right: 54px; }
   .sdrp[data-where="view"] { top: 54px; right: 92px; }
@@ -185,7 +185,8 @@ const PANEL_STYLE = `
   .sdrp .sql { display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.35);
     border-radius: 8px; padding: 3px 7px; }
   .sdrp .sql input { flex: 1; min-width: 0; margin: 0; }
-  .sdrp .sql b { font-weight: normal; min-width: 3.3em; text-align: right; }
+  .sdrp .sql b { font-weight: normal; min-width: 3.1em; text-align: right; }
+  .sdrp .sql span { font-size: 11px; opacity: .85; }
   .sdrp i.dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.25); }
   .sdrp i.dot.lit { background: #7CFC9A; box-shadow: 0 0 6px #7CFC9A; }
   .sdrp .ch { display: flex; align-items: center; gap: 7px; }
@@ -210,7 +211,7 @@ export class SdrPanel {
       <button class="listen" title="Listen on the Pi-SDR receiver (${s.url})"></button>
       <div class="row live"><button class="scan" title="Scan: follow whichever channel is active (top of the list first)">Scan</button>
         <button class="lock" title="Lock: stay on this channel">Lock</button></div>
-      <label class="sql live" title="Squelch: how far above the noise a signal must be to be heard and to light its channel (0 = off). The light shows it open. Saved in Pi-SDR for this mode"><i class="dot"></i><input type="range" min="0" max="40" step="1"><b></b></label>
+      <label class="sql live" title="Squelch: how far above the noise a signal must be to be heard and to light its channel (0 = off). The light shows it open. Saved in Pi-SDR for this mode"><i class="dot"></i><span>SQL</span><input type="range" min="0" max="40" step="1"><b></b></label>
       <div class="err" hidden></div>
       ${s.channels.map((c, i) => `<button class="ch" data-i="${i}" title="${c.name} ${fmt(c.hz)} MHz${c.scan ? "" : " (not scanned)"}"><i class="dot"></i><span>${c.name}</span><small>${fmt(c.hz)}</small></button>`).join("")}`;
     const q = (x) => el.querySelector(x);

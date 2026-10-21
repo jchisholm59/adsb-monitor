@@ -33,6 +33,8 @@ Two pieces that work together:
 
 ![HUD on final: Air Canada Rouge 2064, an A319 from Toronto, 4 nm out on runway 32 at Halifax Stanfield, with the flight path vector on the threshold, ILS-style glideslope and localizer diamonds (130 ft high, 0.14 nm right), speed and altitude tapes, the autopilot's selected altitude, baro setting and vertical speed](docs/hud.jpg)
 
+![Listen panel on the Map tab: live airband from a Pi-SDR receiver, scanning Approach, Tower, Ground, Terminal and ATIS, with Halifax Approach on 119.2 lit and playing, and the squelch at 10 dB with its open light](docs/listen.jpg)
+
 | Map filter | Jump to aircraft (from the list's 📍) |
 |---|---|
 | ![Map filter: chosen classes and airlines only, with counts and logos](docs/map-filter.png) | ![The map centred and zoomed on an aircraft picked from the Aircraft list](docs/locate.png) |
@@ -361,7 +363,7 @@ address out for 15 minutes. With no `ADMIN_PASSWORD`, nothing changes: no sign-i
 | `lat`, `lon` | from PiAware | Receiver position override |
 | `lookups` | `true` | `false` turns off the internet lookups (routes, aircraft details, photos) |
 | `monitor_token` | none | With `ADMIN_PASSWORD` on the monitor: easier to sign in on the Alerts tab (saved to your HA profile) |
-| `sdr` | none | Optional, and only for a [Pi-SDR](https://github.com/jchisholm59/Pi-SDR) receiver on your network: the card tunes it and plays its audio. Without `sdr` the button doesn't appear; other SDR software and internet streams aren't supported. A **Listen** button on the Cockpit tab: the airband from a [Pi-SDR](https://github.com/jchisholm59/Pi-SDR) receiver, e.g. `{url: http://192.168.1.30:8073, channels: [{name: Tower, freq: 118.4}, {name: Ground, freq: 121.9}]}` (MHz, AM). The second button steps through the channels; while you follow an aircraft that lands, a channel named Tower or Approach switches to the one named Ground. Tuning moves the receiver for everyone; Stop tunes it back. Plain-http receivers only work from an http dashboard |
+| `sdr` | none | Optional, and only for a [Pi-SDR](https://github.com/jchisholm59/Pi-SDR) receiver on your network: a **Listen** panel on the Map tab (and in the Cockpit while it's open) that plays the airband. Without `sdr` it doesn't appear; other SDR software and internet streams aren't supported. E.g. `{url: http://192.168.1.30:8073, channels: [{name: Approach, freq: 119.2}, {name: Tower, freq: 118.4}, {name: Ground, freq: 121.9}, {name: ATIS, freq: 121.0, scan: false}]}` (MHz, AM). Each channel's button lights up while it's active (Pi-SDR watches them all at once, so they must fit in about 6 MHz); **Scan** follows whichever is talking (list order first, `scan: false` leaves one out), **Lock** or tapping a channel stays on it, **SQL** sets the squelch (and how strong a signal must be to light up). Not scanning, a channel named Tower or Approach switches to the one named Ground when the aircraft you follow in the Cockpit lands. Stop (or closing the page) tunes the receiver back. Plain-http receivers only work from an http dashboard. Needs Pi-SDR from 2026-10-21 (watch mode) |
 
 ## Data sources
 All free, keyless and CORS-enabled. Lookups are cached.
