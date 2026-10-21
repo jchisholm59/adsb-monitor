@@ -530,6 +530,7 @@ const STYLE = `
 // Its WebSocket carries 48 kHz PCM ([2][channels][3 bytes][int16...]), played on scheduled Web Audio buffers as in
 // Pi-SDR's own page. Tuning it moves the receiver for everyone; Stop puts it back where it was if nobody moved it since.
 // A page served over https can't open the ws:// of a plain-http receiver (mixed content).
+// ships-bridge.js has a copy (marine VHF, NFM): keep the two in step.
 class SdrListener {
   constructor(cfg, onChange) {
     this.url = String(cfg.url || "").replace(/\/+$/, "");
