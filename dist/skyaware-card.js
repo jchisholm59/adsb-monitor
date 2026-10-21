@@ -1254,7 +1254,7 @@ class SkyAwareCard extends HTMLElement {
     return (this._sdrReady ??= (async () => {
       const here = new URL(import.meta.url);
       const { SdrListener, SdrPanel } = await import(new URL("./sdr-listen.js" + here.search, here).href);
-      const listener = new SdrListener(this._config.sdr, "am");
+      const listener = new SdrListener(this._config.sdr, "am", "skyaware-card");
       this._sdrP = { listener, panel: new SdrPanel(listener) };
       if (this._tab !== "cockpit") this._sdrP.panel.mount(this.$("map"), "map");
       return this._sdrP;

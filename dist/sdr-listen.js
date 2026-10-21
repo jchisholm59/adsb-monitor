@@ -1,6 +1,7 @@
 // Listen panel for skyaware-card / ships-card: a Pi-SDR receiver (github.com/jchisholm59/Pi-SDR) watching a few
 // channels at once (the card's `sdr` option), with a light per channel, Scan, Lock and the squelch.
 //   sdr: { url: "http://192.168.1.30:8073", channels: [{ name: "Tower", freq: 118.4 }, { name: "ATIS", freq: 121.0, scan: false }] }
+// (`scan: false` = skipped by Scan to begin with; each channel's ⊘ changes that, remembered per browser)
 // Pi-SDR's watch mode does the work (all the channels must fit its span, about 6 MHz): it reports which channels are
 // active in every spectrum frame, follows the first active one while scanning (list order = priority; `scan: false`
 // leaves a channel out, e.g. ATIS, which never stops), and puts the receiver back when listening stops or this page
@@ -9,13 +10,19 @@
 // A page served over https can't open the ws:// of a plain-http receiver (mixed content).
 
 export class SdrListener {
-  constructor(cfg, defMode = "am") {
+  // store: a localStorage prefix for this browser's choices (which channels Scan skips)
+  constructor(cfg, defMode = "am", store = "sdr") {
     this.url = String(cfg.url || "").replace(/\/+$/, "");
     this.mode = cfg.mode || defMode;
     this.channels = (cfg.channels || []).map((c) => ({
       name: String(c.name || c.freq), hz: Math.round(Number(c.freq) * (Number(c.freq) < 1e4 ? 1e6 : 1)), scan: c.scan !== false,
       area: Array.isArray(c.area) && c.area.length === 4 ? c.area.map(Number) : null,
     })).filter((c) => c.hz > 0);
+    this._key = store + ":sdr-skip";
+    for (const [hz, scan] of Object.entries(this._load())) {
+      const c = this.channels.find((x) => x.hz === Number(hz));
+      if (c) c.scan = scan;
+    }
     this.on = false;
     this.scan = true;
     this.w = null; // Pi-SDR's watch state: {on, scan, locked, cur, ch: [{name, freq, active}]}
@@ -122,6 +129,26 @@ export class SdrListener {
     this.scan = !!on;
     this._send({ cmd: "watchScan", on: this.scan });
   }
+  // A channel in or out of Scan (a continuous weather broadcast or ATIS would hold it forever); kept in this browser.
+  setSkip(i, scan) {
+    const c = this.channels[i];
+    if (!c) return;
+    c.scan = !!scan;
+    const saved = this._load();
+    saved[c.hz] = c.scan;
+    try {
+      localStorage.setItem(this._key, JSON.stringify(saved));
+    } catch (e) {}
+    this._send({ cmd: "watchSkip", i, scan: c.scan });
+    this._emit("state");
+  }
+  _load() {
+    try {
+      return JSON.parse(localStorage.getItem(this._key) || "{}") || {};
+    } catch (e) {
+      return {};
+    }
+  }
   setLock(on) {
     this._send({ cmd: "watchLock", on: !!on });
   }
@@ -171,7 +198,7 @@ export class SdrListener {
 }
 
 const PANEL_STYLE = `
-  .sdrp { position: absolute; z-index: 3; display: flex; flex-direction: column; gap: 5px; width: 140px; font-size: 12.5px;
+  .sdrp { position: absolute; z-index: 3; display: flex; flex-direction: column; gap: 5px; width: 158px; font-size: 12.5px;
     color: #fff; font-variant-numeric: tabular-nums; pointer-events: auto; }
   .sdrp[data-where="map"] { top: 10px; right: 54px; }
   .sdrp[data-where="view"] { top: 54px; right: 92px; }
@@ -192,10 +219,15 @@ const PANEL_STYLE = `
   .sdrp .ch { display: flex; align-items: center; gap: 7px; }
   .sdrp .ch span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sdrp .ch small { opacity: .75; }
+  .sdrp .ch .skip { flex: none; margin: -3px -4px -3px 0; padding: 1px 4px; border-radius: 6px; opacity: .45; font-size: 12px; }
+  .sdrp .ch .skip:hover { opacity: 1; background: rgba(255,255,255,.15); }
+  .sdrp .ch.noscan .skip { opacity: 1; color: #ffb74d; }
+  .sdrp .ch.noscan span { font-style: italic; opacity: .7; }
+  .sdrp .ch.noscan i.dot:not(.lit) { background: transparent; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.35); }
   .sdrp .ch.off { opacity: .8; }
   .sdrp .err { background: rgba(120,0,0,.7); border-radius: 8px; padding: 4px 7px; font-size: 11px; }
   .sdrp [hidden] { display: none !important; }
-  @media (max-width: 500px) { .sdrp { width: 112px; font-size: 11.5px; } .sdrp .ch small { display: none; } }
+  @media (max-width: 500px) { .sdrp { width: 124px; font-size: 11.5px; } .sdrp .ch small { display: none; } }
 `;
 
 // The panel: Listen, then (while listening) Scan / Lock and the squelch, then a button per channel that lights up
@@ -213,7 +245,7 @@ export class SdrPanel {
         <button class="lock" title="Lock: stay on this channel">Lock</button></div>
       <label class="sql live" title="Squelch: how far above the noise a signal must be to be heard and to light its channel (0 = off). The light shows it open. Saved in Pi-SDR for this mode"><i class="dot"></i><span>SQL</span><input type="range" min="0" max="40" step="1"><b></b></label>
       <div class="err" hidden></div>
-      ${s.channels.map((c, i) => `<button class="ch" data-i="${i}" title="${c.name} ${fmt(c.hz)} MHz${c.scan ? "" : " (not scanned)"}"><i class="dot"></i><span>${c.name}</span><small>${fmt(c.hz)}</small></button>`).join("")}`;
+      ${s.channels.map((c, i) => `<button class="ch" data-i="${i}" title="${c.name} ${fmt(c.hz)} MHz"><i class="dot"></i><span>${c.name}</span><small>${fmt(c.hz)}</small><b class="skip" data-skip="${i}" title="Scan skips this channel when crossed out (tap to change)">⊘</b></button>`).join("")}`;
     const q = (x) => el.querySelector(x);
     this.$ = { listen: q(".listen"), scan: q(".scan"), lock: q(".lock"), sql: q(".sql"), sqIn: q(".sql input"), sqVal: q(".sql b"), err: q(".err"),
       live: el.querySelectorAll(".live"), ch: [...el.querySelectorAll(".ch")] };
@@ -221,6 +253,8 @@ export class SdrPanel {
       const b = e.target.closest("button");
       if (!b) return;
       e.stopPropagation(); // not a click on the map underneath
+      const sk = e.target.closest("[data-skip]");
+      if (sk) return void s.setSkip(Number(sk.dataset.skip), !s.channels[Number(sk.dataset.skip)].scan);
       if (b === this.$.listen) s.on ? s.stop() : s.start().catch((err) => s._fail(err.message));
       else if (b === this.$.scan) s.setScan(!s.scanning);
       else if (b === this.$.lock) s.setLock(!s.w?.locked);
@@ -267,6 +301,7 @@ export class SdrPanel {
     $.ch.forEach((b, i) => {
       b.classList.toggle("on", s.cur === i);
       b.querySelector(".dot").classList.toggle("lit", s.active(i));
+      b.classList.toggle("noscan", !s.channels[i].scan);
     });
   }
   destroy() {
