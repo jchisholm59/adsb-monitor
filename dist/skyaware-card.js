@@ -23,7 +23,7 @@ const DEFAULTS = {
   lookups: true, // routes / aircraft details / photos from the internet
   markers: true, // landmarks on the map: true (built-in), false, or a list of {name, lat, lon, sub, note} to add
   cesium_token: "", // Cesium ion token for the Cockpit tab (assets:read; restrict its Allowed URLs to your HA addresses)
-  sdr: null, // Cockpit tab's Listen button: a Pi-SDR receiver, {url, channels: [{name, freq (MHz)}...]}; Tower -> Ground on landing
+  sdr: null, // Listen panel (map + Cockpit): a Pi-SDR receiver, {url, channels: [{name, freq (MHz), scan?}...]}; see sdr-listen.js
   monitor_token: "", // adsb-monitor with ADMIN_PASSWORD: its admin token (or sign in on the Alerts tab; saved to your HA profile)
 };
 
@@ -299,7 +299,7 @@ class SkyAwareCard extends HTMLElement {
     this._tab = get("tab", "map");
     if (this._tab === "cockpit") this._tab = "map"; // Cesium only loads when asked for
     this._labels = get("labels", "1") === "1";
-    this._sat = get("sat", "0") === "1"; // satellite basemap
+    this._sat = get("sat", "1") === "1"; // satellite basemap (the default; the button switches to the gray map, remembered)
     this._trailsAll = get("trails", "1") === "1";
     this._sort = get("sort", "dist");
     this._sortDir = Number(get("sortdir", "1"));
@@ -348,6 +348,7 @@ class SkyAwareCard extends HTMLElement {
 
   disconnectedCallback() {
     this._closeCockpit();
+    if (this._sdrP?.listener.on) this._sdrP.listener.stop(); // off the dashboard: the receiver goes back
     for (const t of this._timers || []) clearInterval(t);
     this._timers = [];
     if (this._ro) this._ro.disconnect();
@@ -1157,6 +1158,7 @@ class SkyAwareCard extends HTMLElement {
     });
     this._initMapInput();
     this._built = true;
+    this._sdrInit();
     if (this.isConnected && this._ro) this._ro.observe(this.$("map"));
     this._setTab(this._tab);
     this._applySource();
@@ -1168,6 +1170,7 @@ class SkyAwareCard extends HTMLElement {
     if (t !== "cockpit") this._save("tab", t);
     if (t === "cockpit") this._openCockpit();
     else this._closeCockpit();
+    if (t !== "cockpit") this._sdrP?.panel.mount(this.$("map"), "map"); // the Listen panel: on the map, or in the cockpit
     for (const b of this.$("tabs").querySelectorAll("button")) b.classList.toggle("on", b.dataset.t === t);
     for (const [k] of TABS) this.$("p-" + k).classList.toggle("on", k === t);
     if (t === "skyaware" && !this.$("sa").firstChild) {
@@ -1213,7 +1216,7 @@ class SkyAwareCard extends HTMLElement {
     this._cockpitLoading = true;
     try {
       const here = new URL(import.meta.url);
-      const [mod, token] = await Promise.all([import(new URL("./skyaware-cockpit.js" + here.search, here).href), this._cesiumToken()]);
+      const [mod, token] = await Promise.all([import(new URL("./skyaware-cockpit.js" + here.search, here).href), this._cesiumToken(), this._sdrInit()]);
       if (this._tab !== "cockpit" || !this.isConnected) return;
       this._cockpit = new mod.Cockpit(this.$("cockpit"), {
         token,
@@ -1224,7 +1227,7 @@ class SkyAwareCard extends HTMLElement {
         },
         color: (a) => altColor(a.alt_baro),
         receiver: this._rx,
-        sdr: this._config.sdr,
+        sdr: this._sdrP,
         dest: (a) => this._route(a)?.d?.icao,
         type: (a) => this._info(a.hex)?.icao,
         onPick: (hex) => this._select(hex),
@@ -1242,6 +1245,20 @@ class SkyAwareCard extends HTMLElement {
     } finally {
       this._cockpitLoading = false;
     }
+  }
+
+  // Listen (the `sdr` option): one Pi-SDR listener and its panel per card (sdr-listen.js, loaded only when set up),
+  // shown on the map and moved into the cockpit while that's open, so listening carries on across the tabs.
+  _sdrInit() {
+    if (!this._config.sdr?.url) return null;
+    return (this._sdrReady ??= (async () => {
+      const here = new URL(import.meta.url);
+      const { SdrListener, SdrPanel } = await import(new URL("./sdr-listen.js" + here.search, here).href);
+      const listener = new SdrListener(this._config.sdr, "am");
+      this._sdrP = { listener, panel: new SdrPanel(listener) };
+      if (this._tab !== "cockpit") this._sdrP.panel.mount(this.$("map"), "map");
+      return this._sdrP;
+    })().catch((e) => console.warn("skyaware-card: Listen panel", e)));
   }
 
   // Cesium token: the card config's cesium_token, else the one pasted into the Cockpit tab, kept in the HA user's

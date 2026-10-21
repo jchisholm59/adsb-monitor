@@ -513,12 +513,6 @@ const STYLE = `
   .ck .btns button:hover { background: rgba(255,255,255,.18); }
   .ck .btns button.on { border-color: #7CFC9A; color: #7CFC9A; }
   .ck .btns button.on { background: var(--primary-color, #03a9f4); border-color: transparent; }
-  .ck .btns .sql { display: flex; align-items: center; gap: 6px; font-size: .85em; color: #fff; background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.35); border-radius: 999px; padding: 2px 10px; }
-  .ck .btns .sql[hidden] { display: none; }
-  .ck .btns .sql input { width: 90px; margin: 0; }
-  .ck .btns .sql b { font-weight: normal; min-width: 3.6em; }
-  .ck .btns .sql i { width: 9px; height: 9px; border-radius: 50%; background: #555; }
-  .ck .btns .sql.open i { background: #7CFC9A; box-shadow: 0 0 6px #7CFC9A; }
   .ck .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; line-height: 1.5; background: #0b1020; }
   .ck .msg > div { max-width: 560px; text-align: left; }
   .ck .msg ol { margin: 8px 0 0; padding-left: 22px; } .ck .msg li { margin: 4px 0; }
@@ -531,161 +525,11 @@ const STYLE = `
   .ck .msg:empty { display: none; }
 `;
 
-// Listen: the airband through a Pi-SDR receiver (github.com/jchisholm59/Pi-SDR), set up with the card's `sdr` option:
-//   sdr: { url: "http://192.168.1.30:8073", channels: [{ name: "Tower", freq: 118.4 }, { name: "Ground", freq: 121.9 }] }
-// Its WebSocket carries 48 kHz PCM ([2][channels][3 bytes][int16...]), played on scheduled Web Audio buffers as in
-// Pi-SDR's own page. Tuning it moves the receiver for everyone; Stop puts it back where it was if nobody moved it since.
-// A page served over https can't open the ws:// of a plain-http receiver (mixed content).
-// ships-bridge.js has a copy (marine VHF, NFM): keep the two in step.
-const SQ_DEFAULT = { am: 6, nfm: 4 }; // dB above the channel noise, when the receiver has no squelch for the mode
-class SdrListener {
-  constructor(cfg, onChange) {
-    this.url = String(cfg.url || "").replace(/\/+$/, "");
-    this.channels = (cfg.channels || []).map((c) => ({ name: String(c.name || c.freq), hz: Math.round(Number(c.freq) * (Number(c.freq) < 1e4 ? 1e6 : 1)), mode: c.mode || "am", area: Array.isArray(c.area) && c.area.length === 4 ? c.area.map(Number) : null }))
-      .filter((c) => c.hz > 0);
-    this.onChange = onChange;
-    this.on = false;
-    this.ch = 0;
-    this.err = "";
-  }
-  get channel() {
-    return this.channels[this.ch];
-  }
-  async start() {
-    if (!this.ctx) {
-      this.ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
-      this.gain = this.ctx.createGain();
-      this.gain.connect(this.ctx.destination);
-    }
-    await this.ctx.resume(); // inside the click, so the browser allows sound
-    this.on = true;
-    this.err = "";
-    this.next = 0;
-    this.prev = null;
-    this.sqSet = null;
-    // Closing the tab (or leaving the page) acts like Stop: the receiver goes back where it was.
-    this._onHide = () => this.on && this.stop();
-    window.addEventListener("pagehide", this._onHide);
-    this._connect();
-    this.onChange();
-  }
-  _connect() {
-    let ws;
-    try {
-      ws = this.ws = new WebSocket(this.url.replace(/^http/, "ws") + "/ws");
-    } catch (e) {
-      return this._fail(location.protocol === "https:" && this.url.startsWith("http:") ? "an https page can't reach an http receiver" : e.message);
-    }
-    ws.binaryType = "arraybuffer";
-    ws.onopen = () => {
-      this._send({ cmd: "spectrum", on: false });
-      this._send({ cmd: "audio", on: true });
-    };
-    ws.onmessage = (ev) => {
-      if (typeof ev.data !== "string") return void (new Uint8Array(ev.data, 0, 1)[0] === 2 && this._play(ev.data));
-      let m;
-      try {
-        m = JSON.parse(ev.data);
-      } catch (e) {
-        return;
-      }
-      if (m.type === "status") {
-        const open = m.sq == null || !!m.sqOpen; // no squelch: always open
-        if (open !== this.sqOpen) (this.sqOpen = open), this.onChange("status");
-        return;
-      }
-      if (m.type !== "state") return;
-      this.radio = m.state;
-      this.onChange("state");
-      if (!this.prev) {
-        this.prev = { freq: m.state.freq, mode: m.state.mode, bw: m.state.bw };
-        this.tune(this.ch);
-      }
-    };
-    ws.onerror = () => this._fail("can't reach the receiver at " + this.url);
-    ws.onclose = () => {
-      if (this.on && this.ws === ws) this._fail("the receiver closed the connection");
-    };
-  }
-  // The squelch slider: Pi-SDR keeps it per mode (so air and marine each have their own). 0 = off.
-  setSq(db) {
-    this.sqSet = null; // the listener's own choice now: Stop leaves it
-    this._send({ cmd: "set", sq: db > 0 ? db : null });
-  }
-  _fail(msg) {
-    this.err = msg;
-    this.stop();
-  }
-  _send(o) {
-    if (this.ws?.readyState === 1) this.ws.send(JSON.stringify(o));
-  }
-  tune(i) {
-    if (!this.channels.length) return this.onChange(); // no channels: listen to whatever it's tuned to
-    this.ch = ((i % this.channels.length) + this.channels.length) % this.channels.length;
-    const c = this.channel;
-    if (c && this.prev) {
-      const r = this.radio || {};
-      if (r.mode !== c.mode) this._send({ cmd: "mode", mode: c.mode });
-      // Squelch: the receiver's own setting for the mode (dB above the channel noise, so it follows the noise). None
-      // there, or none saved (Pi-SDR would carry over the current mode's, e.g. FM's): set a usual one, undone by Stop.
-      const sq = r.mode === c.mode ? r.sq : r.modeSq?.[c.mode];
-      if (sq == null) {
-        this._send({ cmd: "set", sq: SQ_DEFAULT[c.mode] ?? 6 });
-        this.sqSet = c.mode;
-      }
-      this._send({ cmd: "tune", freq: c.hz });
-    }
-    this.onChange();
-  }
-  stop() {
-    const ws = this.ws;
-    this.ws = null;
-    if (ws) {
-      // put the receiver back, unless someone else has tuned it since
-      if (this.prev && ws.readyState === 1 && this.radio?.freq === this.channel?.hz) {
-        if (this.sqSet && this.radio.mode === this.sqSet) ws.send(JSON.stringify({ cmd: "set", sq: null }));
-        if (this.prev.mode !== this.radio.mode) ws.send(JSON.stringify({ cmd: "mode", mode: this.prev.mode, bw: this.prev.bw }));
-        ws.send(JSON.stringify({ cmd: "tune", freq: this.prev.freq }));
-      }
-      try {
-        ws.close();
-      } catch (e) {}
-    }
-    if (this._onHide) window.removeEventListener("pagehide", this._onHide);
-    this._onHide = null;
-    this.on = false;
-    this.onChange();
-  }
-  _play(buf) {
-    if (!this.on || !this.ctx) return;
-    const ch = new Uint8Array(buf, 1, 1)[0];
-    const pcm = new Int16Array(buf.slice(5));
-    const n = pcm.length / ch;
-    const ab = this.ctx.createBuffer(ch, n, 48000);
-    for (let c = 0; c < ch; c++) {
-      const d = ab.getChannelData(c);
-      for (let i = 0; i < n; i++) d[i] = pcm[i * ch + c] / 32768;
-    }
-    const now = this.ctx.currentTime;
-    if (this.next < now + 0.03) this.next = now + 0.15; // underrun (or first): rebuild a small cushion
-    if (this.next > now + 0.6) return; // too far ahead (clock drift): drop this chunk to catch up
-    const src = this.ctx.createBufferSource();
-    src.buffer = ab;
-    src.connect(this.gain);
-    src.start(this.next);
-    this.next += ab.duration;
-  }
-  destroy() {
-    if (this.on) this.stop();
-    this.ctx?.close().catch(() => {});
-  }
-}
-
 export class Cockpit {
   // opts: { token, saveToken(token) -> Promise, color(a) -> css colour, onPick(hex), onExit(), label(a) -> {cs, sub},
   //         receiver {lat, lon} (for the runway list), dest(a) -> destination ICAO (preferred runway for approach mode),
   //         type(a) -> ICAO type designator (picks the follow view's model; else a.t, sent by adsb.lol / adsb.fi),
-  //         sdr {url, channels} (the Listen button; see SdrListener) }
+  //         sdr: the card's SdrListener and its panel {listener, panel} (sdr-listen.js; shown here while open) }
   constructor(container, opts) {
     this.el = container;
     this.opts = opts;
@@ -708,49 +552,16 @@ export class Cockpit {
     this._setView(VIEWS[saved("view", "")] ? saved("view", "") : "behind");
     this._setSmooth(saved("smooth", "1") !== "0");
     this._setMode("cockpit");
-    if (opts.sdr?.url) {
-      // Squelch slider: shown live while dragging, sent to the receiver at most 4 times a second and on release.
-      let last = 0, timer = null;
-      const send = () => (clearTimeout(timer), (timer = null), (last = performance.now()), this.sdr.setSq(Number(this.$.sqIn.value)));
-      this._on(this.$.sqIn, "input", () => {
-        this._sqDrag = true;
-        this._sqShow(Number(this.$.sqIn.value));
-        if (performance.now() - last > 250) send();
-        else timer ??= setTimeout(send, 250);
-      });
-      this._on(this.$.sqIn, "change", () => {
-        send();
-        this._sqDrag = false;
-      });
-      this.sdr = new SdrListener(opts.sdr, () => this._sdrButtons());
-      this._sdrButtons();
-    }
+    this.sdr = opts.sdr?.listener || null;
+    if (opts.sdr?.panel) opts.sdr.panel.mount(this.$.ck, "view");
   }
 
-  _sdrButtons(kind) {
-    const s = this.sdr, c = s.channel;
-    this.$.sql.hidden = !s.on;
-    this.$.sql.classList.toggle("open", s.on && !!s.sqOpen);
-    if (kind === "status") return;
-    if (!this._sqDrag && s.radio) this._sqShow(s.radio.sq ?? 0);
-    this.$.listen.hidden = false;
-    this.$.listen.classList.toggle("on", s.on);
-    this.$.listen.textContent = s.on ? "■ Stop" : s.err ? "🎧 Listen ⚠" : "🎧 Listen";
-    this.$.listen.title = s.err ? "Listen: " + s.err : "Listen to the airband on the Pi-SDR receiver (" + s.url + ")";
-    this.$.chan.hidden = !s.on || s.channels.length < 2;
-    if (c) this.$.chan.textContent = c.name + " " + (c.hz / 1e6).toFixed(c.hz % 1e5 ? 3 : 1);
-  }
-
-  _sqShow(v) {
-    this.$.sqIn.value = v;
-    this.$.sqVal.textContent = v ? v + " dB" : "off";
-  }
-
-  // Listening while the followed aircraft lands: Tower (or Approach, if still on it) -> Ground, by channel name.
+  // Listening (not scanning: Scan follows the talk by itself) while the followed aircraft lands: Tower (or
+  // Approach, if still on it) -> Ground, by channel name.
   _sdrLanding(a) {
     const s = this.sdr;
     const ground = a?.alt_baro === "ground";
-    if (s?.on && a && this._sdrHex === a.hex && this._sdrAir && ground && /tower|twr|approach|app\b/i.test(s.channel?.name || "")) {
+    if (s?.on && !s.scanning && a && this._sdrHex === a.hex && this._sdrAir && ground && /tower|twr|approach|app\b/i.test(s.channel?.name || "")) {
       const g = s.channels.findIndex((c) => /ground|gnd/i.test(c.name));
       if (g >= 0) s.tune(g);
     }
@@ -826,9 +637,6 @@ export class Cockpit {
             <button data-ck="view" title="Camera angle: Behind, Side, Front, Above, or Auto (a new angle every few seconds). Drag to circle the aircraft, wheel or pinch to zoom">View: Behind</button>
             <button data-ck="smooth" title="Smooth: show the aircraft ${SMOOTH_DELAY_S} s behind live, on its real path between position reports, instead of estimating ahead">Smooth</button>
             <button data-ck="reset" title="Look ahead again">Look ahead</button>
-            <button data-ck="listen" hidden></button>
-            <button data-ck="chan" hidden title="Next channel"></button>
-            <label class="sql" hidden title="Squelch: how far above the noise a signal must be to be heard (0 = off). The light shows it open. Saved in Pi-SDR for this mode"><i></i>SQL <input type="range" min="0" max="40" step="1"><b></b></label>
             <button data-ck="exit">Map</button>
           </div>
         </div>
@@ -839,8 +647,7 @@ export class Cockpit {
     const q = (s) => this.el.querySelector(s);
     this.$ = { hudsvg: q(".hudsvg"), ck: q(".ck"), styleBtn: q('[data-ck="style"]'), bankind: q(".bankind"), apr: q(".apr"), aprinfo: q(".aprinfo"), scene: q(".scene"), cs: q(".ident .cs"), sub: q(".ident .sub"), tape: q(".tape"), spd: q(".spd b"),
       alt: q(".alt b"), vs: q(".alt .vs"), status: q(".status"), msg: q(".msg"), credits: q(".credits"), mode: q('[data-ck="mode"]'),
-      mcredit: q(".mcredit"), viewBtn: q('[data-ck="view"]'), smoothBtn: q('[data-ck="smooth"]'), reset: q('[data-ck="reset"]'),
-      listen: q('[data-ck="listen"]'), chan: q('[data-ck="chan"]'), sql: q(".sql"), sqIn: q(".sql input"), sqVal: q(".sql b") };
+      mcredit: q(".mcredit"), viewBtn: q('[data-ck="view"]'), smoothBtn: q('[data-ck="smooth"]'), reset: q('[data-ck="reset"]') };
     this._on(this.el, "click", (e) => {
       const b = e.target.closest("[data-ck]");
       if (!b) return;
@@ -852,8 +659,6 @@ export class Cockpit {
       else if (act === "smooth") this._setSmooth(!this.smooth);
       else if (act === "style") this._setHudStyle(!this.hudStyle);
       else if (act === "reset") this._resetView();
-      else if (act === "listen") this.sdr.on ? this.sdr.stop() : this.sdr.start().catch((e) => this.sdr._fail(e.message));
-      else if (act === "chan") this.sdr.tune(this.sdr.ch + 1);
     });
   }
 
@@ -1765,7 +1570,6 @@ export class Cockpit {
 
   destroy() {
     this.destroyed = true;
-    this.sdr?.destroy();
     clearTimeout(this._tilesTimer);
     this._removePre?.();
     for (const off of this._listeners) off();
