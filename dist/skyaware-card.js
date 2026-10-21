@@ -23,6 +23,7 @@ const DEFAULTS = {
   lookups: true, // routes / aircraft details / photos from the internet
   markers: true, // landmarks on the map: true (built-in), false, or a list of {name, lat, lon, sub, note} to add
   cesium_token: "", // Cesium ion token for the Cockpit tab (assets:read; restrict its Allowed URLs to your HA addresses)
+  sdr: null, // Cockpit tab's Listen button: a Pi-SDR receiver, {url, channels: [{name, freq (MHz)}...]}; Tower -> Ground on landing
   monitor_token: "", // adsb-monitor with ADMIN_PASSWORD: its admin token (or sign in on the Alerts tab; saved to your HA profile)
 };
 
@@ -1223,6 +1224,7 @@ class SkyAwareCard extends HTMLElement {
         },
         color: (a) => altColor(a.alt_baro),
         receiver: this._rx,
+        sdr: this._config.sdr,
         dest: (a) => this._route(a)?.d?.icao,
         type: (a) => this._info(a.hex)?.icao,
         onPick: (hex) => this._select(hex),
