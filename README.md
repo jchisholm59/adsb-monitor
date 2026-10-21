@@ -114,6 +114,11 @@ Home Assistant. Details in [Without Home Assistant](#without-home-assistant) and
   today / 7 days / 30 days / all time, with records and per-day charts.
 - **Alerts**: everything below, as switches, plus a test button and the alert log.
 - **SkyAware**: your original SkyAware page, embedded.
+- **Listen** (optional, with a [Pi-SDR](https://github.com/jchisholm59/Pi-SDR) receiver): live airband audio in the
+  browser, from a panel on the Map tab that moves into the Cockpit. A button per channel (Approach, Tower, Ground...)
+  lights up the moment that channel is talking; **Scan** follows whoever is talking, **Lock** or a tap stays on one,
+  **SQL** is the squelch, and **⊘** keeps a channel (ATIS) out of the scan. Follow an aircraft down in the Cockpit
+  while hearing it cleared to land. See `sdr` in [Configuration](#configuration).
 - Emergency squawks (7500 / 7600 / 7700) show as a red pill in the header and a red ring on the map once confirmed;
   amber with a "?" until then.
 
@@ -168,6 +173,8 @@ flowchart LR
 - For the monitor: **Node.js 22+** on any always-on Linux box (the PiAware Pi itself works), kept running by pm2
   or systemd. Raspberry Pi OS's own `nodejs` package is often older; install 22 from
   [NodeSource](https://github.com/nodesource/distributions) or with nvm. It uses ~150 MB of RAM and little CPU.
+- Optional, for **Listen**: a [Pi-SDR](https://github.com/jchisholm59/Pi-SDR) receiver (an SDRplay RSPduo on a
+  Raspberry Pi, with an airband antenna) on your network.
 - HA served over plain `http` on your LAN. If your HA is `https`, the card can't call `http` addresses (mixed
   content), so put the monitor behind https too.
 
