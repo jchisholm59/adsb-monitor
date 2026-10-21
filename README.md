@@ -220,12 +220,14 @@ WantedBy=multi-user.target
 downloaded aircraft database (~8 MB, refreshed weekly) and your airport.
 
 ### 2. The card
-**With HACS:** HACS → ⋮ → Custom repositories → add `https://github.com/jchisholm59/adsb-monitor`, type
-*Dashboard*, then download **SkyAware Card**. HACS adds the resource for you.
+**With HACS:** search HACS for **SkyAware Card** and download it. HACS adds the resource for you. (If it isn't listed
+yet: HACS → ⋮ → Custom repositories → add `https://github.com/jchisholm59/adsb-monitor`, type *Dashboard*, then
+download it.)
 
 **By hand:**
-1. Copy `dist/skyaware-card.js` and `dist/skyaware-cockpit.js` to `/config/www/` on Home Assistant (the cockpit file
-   is loaded by the card when its Cockpit tab opens; it isn't a resource of its own).
+1. Copy `dist/skyaware-card.js`, `dist/skyaware-cockpit.js` and the `dist/cesium/` folder to `/config/www/` on Home
+   Assistant (the cockpit file and CesiumJS are loaded by the card when its Cockpit tab opens; they aren't resources of
+   their own).
 2. Settings → Dashboards → ⋮ → Resources → Add: `/local/skyaware-card.js`, type *JavaScript module*.
    (After updating the file, change it to `/local/skyaware-card.js?v=2`, `?v=3`… so browsers reload it.)
 
@@ -241,8 +243,8 @@ downloaded aircraft database (~8 MB, refreshed weekly) and your airport.
    cesium_token: eyJ...               # optional: or just paste the token into the Cockpit tab (saved to your HA profile)
    ```
    For the Cockpit tab, create the token with only the `assets:read` scope and restrict its *Allowed URLs* to your
-   Home Assistant addresses: anyone who can open the dashboard can read it. CesiumJS (several MB) comes from Cesium's
-   CDN and only loads when you open the tab.
+   Home Assistant addresses: anyone who can open the dashboard can read it. CesiumJS (several MB) ships with the card
+   (`dist/cesium/`) and only loads when you open the tab.
 
 ### 3. Phone alerts
 1. In Home Assistant, create an automation from [`ha-automation.yaml`](ha-automation.yaml). Pick a long random

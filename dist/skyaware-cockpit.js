@@ -1,6 +1,6 @@
 // Cockpit view for skyaware-card: the selected aircraft's view out of the windscreen over Google's photorealistic
 // 3D world (CesiumJS + Cesium ion), with a HUD. Loaded by skyaware-card.js only when the Cockpit tab opens, so the
-// map never pays for Cesium (several MB, from Cesium's CDN).
+// map never pays for Cesium (several MB, from cesium/ next to this file).
 //
 // Needs `cesium_token` in the card config: a Cesium ion token (scope assets:read; restrict its Allowed URLs to
 // your Home Assistant addresses, since anyone who can open the dashboard can read it).
@@ -22,7 +22,8 @@
 // matches each fix's reported velocity, instead of being extrapolated ahead and corrected when the next fix lands.
 
 const CESIUM_VERSION = "1.146";
-const CESIUM_BASE = `https://cesium.com/downloads/cesiumjs/releases/${CESIUM_VERSION}/Build/Cesium/`;
+// CesiumJS ships with the card (cesium/ next to this file, its LICENSE.md there): nothing is fetched from a CDN.
+const CESIUM_BASE = new URL("./cesium/", import.meta.url).href;
 const GOOGLE_3D_ASSET = 2275207; // Google Photorealistic 3D Tiles on Cesium ion
 // The card's resource version (?v=N), shown in the corner so a stale cached copy is easy to spot.
 const BUILD = (() => {
@@ -221,13 +222,13 @@ function loadCesium() {
   window.CESIUM_BASE_URL = CESIUM_BASE;
   cesiumLoading = new Promise((resolve, reject) => {
     const s = document.createElement("script");
-    s.src = CESIUM_BASE + "Cesium.js";
+    s.src = CESIUM_BASE + "Cesium.js?v=" + CESIUM_VERSION;
     s.async = true;
     s.onload = () => (window.Cesium ? resolve(window.Cesium) : reject(new Error("Cesium did not load")));
     s.onerror = () => {
       cesiumLoading = null;
       s.remove();
-      reject(new Error("Couldn't download CesiumJS from cesium.com"));
+      reject(new Error("Couldn't load CesiumJS (" + CESIUM_BASE + "Cesium.js)"));
     };
     document.head.appendChild(s);
   });
@@ -679,7 +680,7 @@ export class Cockpit {
     if (!root.querySelector?.("link[data-cesium]")) {
       const l = document.createElement("link");
       l.rel = "stylesheet";
-      l.href = CESIUM_BASE + "Widgets/widgets.css";
+      l.href = CESIUM_BASE + "Widgets/widgets.css?v=" + CESIUM_VERSION;
       l.dataset.cesium = "1";
       (root.host ? root : document.head).appendChild(l);
     }

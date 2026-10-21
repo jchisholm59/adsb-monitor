@@ -8,7 +8,7 @@
 // Coverage history, phone alerts (squawks, military, helicopters, watched flights landing) and a CORS proxy for use
 // over a VPN come from adsb-monitor (https://github.com/jchisholm59/adsb-monitor), a small always-on service.
 // Cockpit tab: the selected aircraft's view over Google's photorealistic 3D world (skyaware-cockpit.js, CesiumJS from
-// Cesium's CDN, loaded only when the tab opens). Needs `cesium_token` (a Cesium ion token, scope assets:read).
+// cesium/ next to this file, loaded only when the tab opens). Needs `cesium_token` (a Cesium ion token, scope assets:read).
 // Install: copy to /config/www/ha-cards/, add /local/ha-cards/skyaware-card.js as a JavaScript module resource
 // (skyaware-cockpit.js goes next to it; it isn't a resource of its own).
 
