@@ -541,7 +541,7 @@ const SQ_DEFAULT = { am: 6, nfm: 4 }; // dB above the channel noise, when the re
 class SdrListener {
   constructor(cfg, onChange) {
     this.url = String(cfg.url || "").replace(/\/+$/, "");
-    this.channels = (cfg.channels || []).map((c) => ({ name: String(c.name || c.freq), hz: Math.round(Number(c.freq) * (Number(c.freq) < 1e4 ? 1e6 : 1)), mode: c.mode || "am" }))
+    this.channels = (cfg.channels || []).map((c) => ({ name: String(c.name || c.freq), hz: Math.round(Number(c.freq) * (Number(c.freq) < 1e4 ? 1e6 : 1)), mode: c.mode || "am", area: Array.isArray(c.area) && c.area.length === 4 ? c.area.map(Number) : null }))
       .filter((c) => c.hz > 0);
     this.onChange = onChange;
     this.on = false;
