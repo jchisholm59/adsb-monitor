@@ -216,6 +216,16 @@ const REAR_SVG = "data:image/svg+xml;base64," + btoa(`<svg xmlns="http://www.w3.
 
 let cesiumLoading = null;
 
+// The GPU's name as WebGL reports it ("ANGLE (Mesa, AGX G13/G14, OpenGL ES 3.2)"), or "" when hidden.
+function gpuName(scene) {
+  try {
+    const gl = scene.context._gl, ext = gl.getExtension("WEBGL_debug_renderer_info");
+    return String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || "");
+  } catch (e) {
+    return "";
+  }
+}
+
 function loadCesium() {
   if (window.Cesium) return Promise.resolve(window.Cesium);
   if (cesiumLoading) return cesiumLoading;
@@ -711,6 +721,12 @@ export class Cockpit {
     const scene = w.scene;
     scene.globe.baseColor = C.Color.fromCssColorString("#1d2a3a");
     scene.globe.depthTestAgainstTerrain = true;
+    // Apple GPUs on Asahi Linux (Mesa's AGX OpenGL driver, since Mesa 26.2.5): with Cesium's logarithmic depth buffer
+    // whole distant tiles flashed black along the horizon at altitude. Normal depth (Cesium splits the view into a few
+    // depth ranges instead) draws them right. Firefox hides the GPU's name ("Generic Renderer"), so logarithmic depth is
+    // kept only for GPUs named as ones known to draw it right; anything else gets normal depth (harmless, a little slower).
+    const gpu = gpuName(scene);
+    if (/\bAGX\b|Apple/i.test(gpu) || !/Intel|AMD|Radeon|NVIDIA|GeForce|Adreno|Mali/i.test(gpu)) scene.logarithmicDepthBuffer = false;
     scene.screenSpaceCameraController.enableInputs = false; // the camera is ours; drag looks around instead
     w.camera.frustum.fov = C.Math.toRadians(this.fov);
     this._token = token;
