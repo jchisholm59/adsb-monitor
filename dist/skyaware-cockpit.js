@@ -711,6 +711,10 @@ export class Cockpit {
     const scene = w.scene;
     scene.globe.baseColor = C.Color.fromCssColorString("#1d2a3a");
     scene.globe.depthTestAgainstTerrain = true;
+    // Fog still culls the far tiles, but isn't painted: on the 3D tiles its colour comes from the ground atmosphere,
+    // which goes black for tiles out near the horizon, so at altitude whole distant tiles flashed black on and off
+    // along it (Cesium switches the fog per tile).
+    scene.fog.renderable = false;
     scene.screenSpaceCameraController.enableInputs = false; // the camera is ours; drag looks around instead
     w.camera.frustum.fov = C.Math.toRadians(this.fov);
     this._token = token;
