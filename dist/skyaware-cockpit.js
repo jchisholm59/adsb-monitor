@@ -711,10 +711,6 @@ export class Cockpit {
     const scene = w.scene;
     scene.globe.baseColor = C.Color.fromCssColorString("#1d2a3a");
     scene.globe.depthTestAgainstTerrain = true;
-    // Fog still culls the far tiles, but isn't painted: on the 3D tiles its colour comes from the ground atmosphere,
-    // which goes black for tiles out near the horizon, so at altitude whole distant tiles flashed black on and off
-    // along it (Cesium switches the fog per tile).
-    scene.fog.renderable = false;
     scene.screenSpaceCameraController.enableInputs = false; // the camera is ours; drag looks around instead
     w.camera.frustum.fov = C.Math.toRadians(this.fov);
     this._token = token;
@@ -760,11 +756,11 @@ export class Cockpit {
     const res = await C.IonResource.fromAssetId(GOOGLE_3D_ASSET, { accessToken: this._token });
     // foveatedTimeDelay 0: Cesium otherwise holds back tiles away from the screen centre until the camera has been still
     // for 0.2 s, and this camera moves with the aircraft every frame, so the ground to either side was slow to load.
-    // No skipLevelOfDetail (tried 2026-10-12): it draws a coarse tile and its sharper children over each other while
-    // they swap, and with this camera always moving the distant tiles never settle, so big artifacts flashed along the
-    // horizon (gone the moment the view paused).
+    // skipLevelOfDetail: show a coarse level first, then jump to near the final detail instead of fetching every level
+    // in between (Google's hierarchy is deep, and each level is a round trip).
     return C.Cesium3DTileset.fromUrl(res, {
       cacheBytes: 768 * 1024 * 1024, enableCollision: true, asynchronouslyLoadImagery: true, foveatedTimeDelay: 0,
+      skipLevelOfDetail: true, baseScreenSpaceError: 1024, skipScreenSpaceErrorFactor: 16, skipLevels: 1,
     });
   }
 
