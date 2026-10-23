@@ -351,6 +351,7 @@ address out for 15 minutes. With no `ADMIN_PASSWORD`, nothing changes: no sign-i
 | `NTFY_TOKEN` | none | Only for a protected ntfy server or topic |
 | `DASHBOARD_URL` | none | Opened when you tap an ntfy alert, e.g. `http://192.168.1.20:7100/` |
 | `ADMIN_PASSWORD` | none | Guests can look but not change anything; sign in on the Alerts tab (see [Sharing it with guests](#sharing-it-with-guests)) |
+| `SDR_URL`, `SDR_CHANNELS` | none | The Listen panel (the airband, a [Pi-SDR](https://github.com/jchisholm59/Pi-SDR) receiver) for the dashboard and the add-on, without writing the card's `sdr` option: the receiver's address, and channels as `Name:MHz;...` with `:noscan` to leave one out of Scan, e.g. `Tower:118.4;Ground:121.9;ATIS:121.0:noscan`. No default: airband channels depend on the airport. A card `sdr` option (or the add-on's `card_options`) wins. The browser plays the audio straight from the receiver, so it must be able to reach it (e.g. over Tailscale away from home) |
 | `CESIUM_TOKEN` | none | Cesium ion token for the Cockpit tab, for everyone using the dashboard (and guests) |
 | `ADMIN_TRUSTED_IPS` | none | Addresses always treated as signed in (the HA add-on sets Home Assistant's ingress proxy) |
 | `PORT` | `7100` | Dashboard, API and proxy port |
