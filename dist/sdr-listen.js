@@ -232,6 +232,10 @@ const PANEL_STYLE = `
   .sdrp .ch.noscan i.dot:not(.lit) { background: transparent; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.35); }
   .sdrp .ch.off { opacity: .8; }
   .sdrp .err { background: rgba(120,0,0,.7); border-radius: 8px; padding: 4px 7px; font-size: 11px; }
+  .sdrp .hint { background: rgba(0,0,0,.7); border: 1px solid rgba(255,255,255,.35); border-radius: 8px; padding: 6px 8px;
+    font-size: 11px; line-height: 1.4; }
+  .sdrp .hint code { font-size: 10.5px; word-break: break-all; color: #ffd27a; }
+  .sdrp .listen:disabled { opacity: .55; cursor: default; }
   .sdrp [hidden] { display: none !important; }
   @media (max-width: 500px) { .sdrp { width: 124px; font-size: 11.5px; } .sdrp .ch small { display: none; } }
 `;
@@ -245,6 +249,16 @@ export class SdrPanel {
     el.className = "sdrp";
     el.dataset.where = "map";
     const fmt = (hz) => (hz / 1e6).toFixed(hz % 1e5 ? 3 : 1);
+    // A receiver but no channels (e.g. the add-on's sdr_url without sdr_channels): say how to add them.
+    if (!s.channels.length) {
+      const ex = s.mode === "am" ? "Tower:118.4;Ground:121.9;ATIS:121.0:noscan" : "Ch 16:156.8;Ch 12:156.6";
+      el.innerHTML = `<style>${PANEL_STYLE}</style><button class="listen" disabled>🎧 Listen</button>
+        <div class="hint">No channels to listen to yet. Add them as <b>sdr_channels</b> in the add-on's Configuration (or
+        <b>SDR_CHANNELS</b> in the monitor's .env, or <b>channels</b> in the card's <b>sdr</b> option), name:MHz, e.g.
+        <code>${ex}</code></div>`;
+      for (const t of ["click", "pointerdown", "pointerup", "wheel", "dblclick"]) el.addEventListener(t, (e) => e.stopPropagation());
+      return;
+    }
     el.innerHTML = `<style>${PANEL_STYLE}</style>
       <button class="listen" title="Listen on the Pi-SDR receiver (${s.url})"></button>
       <div class="row live"><button class="scan" title="Scan: follow whichever channel is active (top of the list first)">Scan</button>

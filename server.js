@@ -51,7 +51,8 @@ const AUTH = require('./auth')(env('ADMIN_PASSWORD'), 'adsb-monitor', env('ADMIN
 const CESIUM_TOKEN = env('CESIUM_TOKEN'); // the Cockpit tab's token for everyone using the dashboard (and guests) // where tapping an ntfy alert goes, e.g. http://granite:7100/
 // Listen (Pi-SDR audio) for the dashboard and the add-on panel, from .env: SDR_URL, and SDR_CHANNELS as
 // "Name:MHz;Name:MHz" (":noscan" after one leaves it out of Scan), e.g. "Tower:118.4;Ground:121.9;ATIS:121.0:noscan".
-// No default channels (airband depends on the airport): Listen needs SDR_CHANNELS. An `sdr` in card.json (the add-on's
+// No default channels (airband depends on the airport): Listen needs SDR_CHANNELS
+// (without them the panel says so). An `sdr` in card.json (the add-on's
 // card_options) wins, for more (e.g. a channel's `area`).
 const SDR_DEFAULT_CHANNELS = '';
 const SDR = (() => {
@@ -61,7 +62,8 @@ const SDR = (() => {
     .filter((m) => m && Number(m[2]) >= 1 && Number(m[2]) <= 2000)
     .map((m) => ({ name: m[1].slice(0, 20), freq: Number(m[2]), ...(m[3] ? { scan: false } : {}) }));
   if (!url) return null;
-  if (!channels.length) return log('SDR_URL is set but SDR_CHANNELS has no channels ("Name:MHz;..."): no Listen panel'), null;
+  // No channels: the Listen panel says how to add them.
+  if (!channels.length) return log('SDR_URL is set but SDR_CHANNELS has no channels ("Name:MHz;..."): the Listen panel shows how to add them'), { url, channels: [] };
   const f = channels.map((c) => c.freq);
   if (Math.max(...f) - Math.min(...f) > 6) log('SDR_CHANNELS spans more than 6 MHz: the Pi-SDR can only watch channels within about 6 MHz of each other');
   return { url, channels };
