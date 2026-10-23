@@ -49,6 +49,23 @@ const NTFY_TOKEN = env('NTFY_TOKEN');
 const DASHBOARD_URL = envUrl('DASHBOARD_URL');
 const AUTH = require('./auth')(env('ADMIN_PASSWORD'), 'adsb-monitor', env('ADMIN_TRUSTED_IPS')); // guests can look, only the owner can change
 const CESIUM_TOKEN = env('CESIUM_TOKEN'); // the Cockpit tab's token for everyone using the dashboard (and guests) // where tapping an ntfy alert goes, e.g. http://granite:7100/
+// Listen (Pi-SDR audio) for the dashboard and the add-on panel, from .env: SDR_URL, and SDR_CHANNELS as
+// "Name:MHz;Name:MHz" (":noscan" after one leaves it out of Scan), e.g. "Tower:118.4;Ground:121.9;ATIS:121.0:noscan".
+// No default channels (airband depends on the airport): Listen needs SDR_CHANNELS. An `sdr` in card.json (the add-on's
+// card_options) wins, for more (e.g. a channel's `area`).
+const SDR_DEFAULT_CHANNELS = '';
+const SDR = (() => {
+  const url = envUrl('SDR_URL');
+  const channels = (env('SDR_CHANNELS') || SDR_DEFAULT_CHANNELS).split(';')
+    .map((s) => /^\s*([^:]+?)\s*:\s*(\d+(?:\.\d+)?)\s*(:\s*noscan\s*)?$/i.exec(s))
+    .filter((m) => m && Number(m[2]) >= 1 && Number(m[2]) <= 2000)
+    .map((m) => ({ name: m[1].slice(0, 20), freq: Number(m[2]), ...(m[3] ? { scan: false } : {}) }));
+  if (!url) return null;
+  if (!channels.length) return log('SDR_URL is set but SDR_CHANNELS has no channels ("Name:MHz;..."): no Listen panel'), null;
+  const f = channels.map((c) => c.freq);
+  if (Math.max(...f) - Math.min(...f) > 6) log('SDR_CHANNELS spans more than 6 MHz: the Pi-SDR can only watch channels within about 6 MHz of each other');
+  return { url, channels };
+})();
 const UA = 'adsb-monitor/1.0 (+https://github.com/jchisholm59/adsb-monitor)';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data'); // the HA add-on sets /data
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
@@ -941,7 +958,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) return sendFile(res, path.join(__dirname, 'web', 'index.html'));
     if (req.method === 'GET' && p.startsWith('/dist/cesium/')) return sendCesium(req, res, p.slice('/dist/cesium/'.length));
     if (req.method === 'GET' && /^\/(web|dist)\/[\w.-]+$/.test(p)) return sendFile(res, path.join(__dirname, p));
-    if (req.method === 'GET' && p === '/card-config.json') return sendJson(res, { ...(CESIUM_TOKEN ? { cesium_token: CESIUM_TOKEN } : {}), ...readJson(path.join(DATA_DIR, 'card.json'), {}) });
+    if (req.method === 'GET' && p === '/card-config.json') return sendJson(res, { ...(CESIUM_TOKEN ? { cesium_token: CESIUM_TOKEN } : {}), ...(SDR ? { sdr: SDR } : {}), ...readJson(path.join(DATA_DIR, 'card.json'), {}) });
     if (p === '/api') {
       return sendJson(res, { service: 'adsb-monitor', endpoints: ['/api/status', '/api/coverage', '/api/settings', '/api/watch', '/api/alerts', '/api/classes', '/api/test-alert', '/api/auth', '/api/login', SKYAWARE, '/status.json'] });
     }
