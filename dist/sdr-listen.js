@@ -205,6 +205,13 @@ const PANEL_STYLE = `
     color: #fff; font-variant-numeric: tabular-nums; pointer-events: auto; }
   .sdrp[data-where="map"] { top: 10px; right: 54px; }
   .sdrp[data-where="view"] { top: 54px; right: 92px; }
+  /* "bar": a row above the view (the Planes cockpit), clear of its HUD; wraps on narrow screens */
+  .sdrp[data-where="bar"] { position: static; flex-direction: row; flex-wrap: wrap; align-items: stretch; width: auto; gap: 6px; margin: 0 0 8px; }
+  .sdrp[data-where="bar"] .listen { flex: none; min-width: 92px; }
+  .sdrp[data-where="bar"] .row { flex: none; } .sdrp[data-where="bar"] .row button { min-width: 54px; }
+  .sdrp[data-where="bar"] .sql { flex: none; width: 168px; }
+  .sdrp[data-where="bar"] .ch { flex: none; max-width: 190px; } .sdrp[data-where="bar"] .ch span { flex: none; }
+  .sdrp[data-where="bar"] .err, .sdrp[data-where="bar"] .hint { flex-basis: 100%; }
   .sdrp button { font: inherit; color: inherit; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.35);
     border-radius: 8px; padding: 5px 8px; cursor: pointer; text-align: left; }
   .sdrp button:hover { background: rgba(40,40,40,.75); }
@@ -237,7 +244,8 @@ const PANEL_STYLE = `
   .sdrp .hint code { font-size: 10.5px; word-break: break-all; color: #ffd27a; }
   .sdrp .listen:disabled { opacity: .55; cursor: default; }
   .sdrp [hidden] { display: none !important; }
-  @media (max-width: 500px) { .sdrp { width: 124px; font-size: 11.5px; } .sdrp .ch small { display: none; } }
+  @media (max-width: 500px) { .sdrp { width: 124px; font-size: 11.5px; } .sdrp .ch small { display: none; }
+    .sdrp[data-where="bar"] { width: auto; } .sdrp[data-where="bar"] .sql { width: 140px; } }
 `;
 
 // The panel: Listen, then (while listening) Scan / Lock and the squelch, then a button per channel that lights up
@@ -301,10 +309,11 @@ export class SdrPanel {
     this.$.sqIn.value = v;
     this.$.sqVal.textContent = v ? v + " dB" : "off";
   }
-  // where: "map" (beside the map's buttons) or "view" (the cockpit / bridge view, clear of its right-hand box)
-  mount(parent, where) {
+  // where: "map" (beside the map's buttons), "view" (over the bridge view, clear of its right-hand box) or "bar" (a row
+  // above the cockpit view, so nothing covers its HUD); before: the element to go in front of (else at the end)
+  mount(parent, where, before = null) {
     this.el.dataset.where = where;
-    if (this.el.parentNode !== parent) parent.appendChild(this.el);
+    if (this.el.parentNode !== parent || (before && this.el.nextSibling !== before)) parent.insertBefore(this.el, before);
   }
   render(kind) {
     const s = this.s, $ = this.$;

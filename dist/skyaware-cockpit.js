@@ -539,7 +539,7 @@ export class Cockpit {
   // opts: { token, saveToken(token) -> Promise, color(a) -> css colour, onPick(hex), onExit(), label(a) -> {cs, sub},
   //         receiver {lat, lon} (for the runway list), dest(a) -> destination ICAO (preferred runway for approach mode),
   //         type(a) -> ICAO type designator (picks the follow view's model; else a.t, sent by adsb.lol / adsb.fi),
-  //         sdr: the card's SdrListener and its panel {listener, panel} (sdr-listen.js; shown here while open) }
+  //         sdr: the card's SdrListener and its panel {listener, panel} (sdr-listen.js; a row above the view while open) }
   constructor(container, opts) {
     this.el = container;
     this.opts = opts;
@@ -563,7 +563,7 @@ export class Cockpit {
     this._setSmooth(saved("smooth", "1") !== "0");
     this._setMode("cockpit");
     this.sdr = opts.sdr?.listener || null;
-    if (opts.sdr?.panel) opts.sdr.panel.mount(this.$.ck, "view");
+    if (opts.sdr?.panel) opts.sdr.panel.mount(this.el, "bar", this.$.ck); // a row above the view, clear of the HUD
   }
 
   // Listening (not scanning: Scan follows the talk by itself) while the followed aircraft lands: Tower (or
