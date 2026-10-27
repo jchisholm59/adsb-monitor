@@ -205,7 +205,7 @@ const PANEL_STYLE = `
     color: #fff; font-variant-numeric: tabular-nums; pointer-events: auto; }
   .sdrp[data-where="map"] { top: 10px; right: 54px; }
   .sdrp[data-where="view"] { top: 54px; right: 92px; }
-  /* "bar": a row above the view (the Planes cockpit), clear of its HUD; wraps on narrow screens */
+  /* "bar": a row above the view (the Planes cockpit, the Ships bridge), clear of its HUD; wraps on narrow screens */
   .sdrp[data-where="bar"] { position: static; flex-direction: row; flex-wrap: wrap; align-items: stretch; width: auto; gap: 6px; margin: 0 0 8px; }
   .sdrp[data-where="bar"] .listen { flex: none; min-width: 92px; }
   .sdrp[data-where="bar"] .row { flex: none; } .sdrp[data-where="bar"] .row button { min-width: 54px; }
@@ -309,8 +309,8 @@ export class SdrPanel {
     this.$.sqIn.value = v;
     this.$.sqVal.textContent = v ? v + " dB" : "off";
   }
-  // where: "map" (beside the map's buttons), "view" (over the bridge view, clear of its right-hand box) or "bar" (a row
-  // above the cockpit view, so nothing covers its HUD); before: the element to go in front of (else at the end)
+  // where: "map" (beside the map's buttons), "bar" (a row above the cockpit / bridge view, so nothing covers its HUD)
+  // or "view" (over the view's right-hand side; no longer used); before: the element to go in front of (else at the end)
   mount(parent, where, before = null) {
     this.el.dataset.where = where;
     if (this.el.parentNode !== parent || (before && this.el.nextSibling !== before)) parent.insertBefore(this.el, before);
