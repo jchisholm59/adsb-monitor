@@ -9,6 +9,9 @@
 // The panel is one element per card, moved between the views (map, cockpit / bridge) so listening carries on.
 // A page served over https can't open the ws:// of a plain-http receiver (mixed content).
 
+// Config values (the receiver url, channel names) can hold anything: escaped before going into markup.
+const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
 export class SdrListener {
   // store: a localStorage prefix for this browser's choices (which channels Scan skips)
   constructor(cfg, defMode = "am", store = "sdr") {
@@ -268,12 +271,12 @@ export class SdrPanel {
       return;
     }
     el.innerHTML = `<style>${PANEL_STYLE}</style>
-      <button class="listen" title="Listen on the Pi-SDR receiver (${s.url})"></button>
+      <button class="listen" title="Listen on the Pi-SDR receiver (${esc(s.url)})"></button>
       <div class="row live"><button class="scan" title="Scan: follow whichever channel is active (top of the list first)">Scan</button>
         <button class="lock" title="Lock: stay on this channel">Lock</button></div>
       <label class="sql live" title="Squelch: how far above the noise a signal must be to be heard and to light its channel (0 = off). The light shows it open. Saved in Pi-SDR for this mode"><i class="dot"></i><span>SQL</span><input type="range" min="0" max="40" step="1"><b></b></label>
       <div class="err" hidden></div>
-      ${s.channels.map((c, i) => `<button class="ch" data-i="${i}" title="${c.name} ${fmt(c.hz)} MHz"><i class="dot"></i><span>${c.name}</span><small>${fmt(c.hz)}</small><b class="skip" data-skip="${i}" title="Scan skips this channel when crossed out (tap to change)">⊘</b></button>`).join("")}`;
+      ${s.channels.map((c, i) => `<button class="ch" data-i="${i}" title="${esc(c.name)} ${fmt(c.hz)} MHz"><i class="dot"></i><span>${esc(c.name)}</span><small>${fmt(c.hz)}</small><b class="skip" data-skip="${i}" title="Scan skips this channel when crossed out (tap to change)">⊘</b></button>`).join("")}`;
     const q = (x) => el.querySelector(x);
     this.$ = { listen: q(".listen"), scan: q(".scan"), lock: q(".lock"), sql: q(".sql"), sqIn: q(".sql input"), sqVal: q(".sql b"), err: q(".err"),
       live: el.querySelectorAll(".live"), ch: [...el.querySelectorAll(".ch")] };
