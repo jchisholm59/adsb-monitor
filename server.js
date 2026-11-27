@@ -446,22 +446,97 @@ async function photoOf(hex) {
     return '';
   }
 }
-// Route from adsbdb's callsign database, checked against the plane's position (a plane far off the great-circle path
-// gets no route: the database can be out of date). adsb.im's routeset API, used until 2026-11, now answers 403.
+// ---- routes -----------------------------------------------------------------
+// adsb.im's routeset (routes checked against each plane's position) for every callsign in view, batched every 30 s over
+// plain http with a User-Agent naming a contact, as its API rules ask (https://adsb.im/api); it answers 403 otherwise
+// (that broke routes in 2026-11). ROUTES_CONTACT (an e-mail or website) overrides the contact. Callsigns adsb.im doesn't
+// know, or every callsign while it's failing, fall back to adsbdb (by callsign only, so the position is checked here).
+// The card reads the results from /api/routes; alerts use them too.
+const ROUTES_UA = `adsb-monitor (+${env('ROUTES_CONTACT', 'https://github.com/jchisholm59/adsb-monitor')})`;
+const ROUTE_HIT_MS = 30 * 60000, ROUTE_MISS_MS = 10 * 60000;
+const routes = new Map(); // callsign -> {t, r: {codes, airports, plausible, src} | null}
+let routeErr = null, routing = false;
+const routeFresh = (c) => !!c && Date.now() - c.t < (c.r ? ROUTE_HIT_MS : ROUTE_MISS_MS);
+
+// The plane's detour from the origin->destination great circle (nm) is within reason.
+function onRoute(o, d, lat, lon) {
+  const direct = dist(o.lat, o.lon, d.lat, d.lon);
+  return dist(o.lat, o.lon, lat, lon) + dist(lat, lon, d.lat, d.lon) - direct <= Math.max(150, direct * 0.5);
+}
+// adsbdb's route for a callsign, or null if it has none. Throws on a network error (so it's retried, not cached).
+async function adsbdbRoute(cs, lat, lon) {
+  const r = await fetchT(`https://api.adsbdb.com/v0/callsign/${encodeURIComponent(cs)}`, {}, 5000);
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`adsbdb HTTP ${r.status}`);
+  const fr = (await r.json())?.response?.flightroute;
+  const apt = (x) => x && x.latitude !== undefined && { iata: x.iata_code || '', icao: x.icao_code || '', name: x.name || '',
+    location: x.municipality || '', country: x.country_iso_name || '', lat: x.latitude, lon: x.longitude };
+  const o = apt(fr?.origin), d = apt(fr?.destination);
+  if (!o || !d) return null;
+  return { codes: `${o.iata || o.icao}-${d.iata || d.icao}`, airports: [o, d], plausible: lat === undefined || onRoute(o, d, lat, lon), src: 'adsbdb' };
+}
+async function refreshRoutes() {
+  if (routing) return;
+  routing = true;
+  try {
+    const now = Date.now();
+    for (const [cs, c] of routes) if (now - c.t > 2 * 3600_000) routes.delete(cs);
+    const batch = [];
+    for (const a of current || []) {
+      const cs = callsign(a);
+      if (cs && a.lat !== undefined && !routeFresh(routes.get(cs)) && !batch.some((w) => w.callsign === cs)) batch.push({ callsign: cs, lat: a.lat, lng: a.lon });
+    }
+    if (!batch.length) return;
+    batch.splice(100);
+    let got = new Map();
+    try {
+      const res = await getJson('http://adsb.im/api/0/routeset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'User-Agent': ROUTES_UA },
+        body: JSON.stringify({ planes: batch }),
+      }, 15000);
+      got = new Map((Array.isArray(res) ? res : []).map((x) => [x.callsign, x]));
+      routeErr = null;
+    } catch (e) {
+      if (routeErr !== e.message) console.log(`${new Date().toISOString()} routes: adsb.im ${e.message}; using adsbdb`);
+      routeErr = e.message;
+    }
+    let fallback = 20; // adsbdb lookups per pass; the rest wait for the next one
+    for (const w of batch) {
+      const x = got.get(w.callsign);
+      let r = null;
+      if (x?.airport_codes && x.airport_codes !== 'unknown' && x._airports?.length >= 2) {
+        r = { codes: x._airport_codes_iata, plausible: x.plausible !== false, src: 'adsb.im',
+          airports: x._airports.map((p) => ({ iata: p.iata || '', icao: p.icao || '', name: p.name || '', location: p.location || '', country: p.countryiso2 || '', lat: p.lat, lon: p.lon })) };
+      } else {
+        if (fallback-- <= 0) continue;
+        try {
+          r = await adsbdbRoute(w.callsign, w.lat, w.lng);
+        } catch (e) {
+          continue;
+        }
+      }
+      routes.set(w.callsign, { t: Date.now(), r });
+    }
+  } finally {
+    routing = false;
+  }
+}
+// Route text for alerts ("YYZ→YHZ"): the cached route, else adsbdb straight away; none if it doesn't fit the position.
 async function routeOf(a) {
   const cs = callsign(a);
   if (!cs || a.lat === undefined) return '';
-  try {
-    const fr = (await getJson(`https://api.adsbdb.com/v0/callsign/${encodeURIComponent(cs)}`, {}, 5000))?.response?.flightroute;
-    const o = fr?.origin, d = fr?.destination;
-    if (o?.latitude === undefined || d?.latitude === undefined) return '';
-    const direct = dist(o.latitude, o.longitude, d.latitude, d.longitude);
-    const detour = dist(o.latitude, o.longitude, a.lat, a.lon) + dist(a.lat, a.lon, d.latitude, d.longitude) - direct;
-    if (detour > Math.max(150, direct * 0.5)) return '';
-    return `${o.iata_code || o.icao_code}→${d.iata_code || d.icao_code}`;
-  } catch (e) {
-    return '';
+  let c = routes.get(cs);
+  if (!routeFresh(c)) {
+    try {
+      c = { t: Date.now(), r: await adsbdbRoute(cs, a.lat, a.lon) };
+    } catch (e) {
+      return '';
+    }
   }
+  const r = c.r;
+  if (!r || !r.plausible || !onRoute(r.airports[0], r.airports[r.airports.length - 1], a.lat, a.lon)) return '';
+  return r.codes.replace(/-/g, '→');
 }
 async function describe(a) {
   const rec = DB.mil.get(a.hex) || DB.heli.get(a.hex);
@@ -941,6 +1016,14 @@ const server = http.createServer(async (req, res) => {
       const list = settings.watch.map((w) => w.callsign);
       return sendJson(res, await updateSettings({ watch: b.remove ? list.filter((x) => x !== cs) : [...list, cs] }));
     }
+    if (p === '/api/routes') {
+      const out = {};
+      for (const a of current || []) {
+        const cs = callsign(a), c = cs && routes.get(cs);
+        if (c) out[cs] = c.r;
+      }
+      return sendJson(res, { error: routeErr, routes: out });
+    }
     if (p === '/api/alerts') return sendJson(res, alerts.slice(-100).reverse());
     // Military / helicopter flags for the aircraft in view (the card can't see the aircraft database itself).
     if (p === '/api/classes') {
@@ -964,7 +1047,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && /^\/(web|dist)\/[\w.-]+$/.test(p)) return sendFile(res, path.join(__dirname, p));
     if (req.method === 'GET' && p === '/card-config.json') return sendJson(res, { ...(CESIUM_TOKEN ? { cesium_token: CESIUM_TOKEN } : {}), ...(SDR ? { sdr: SDR } : {}), ...readJson(path.join(DATA_DIR, 'card.json'), {}) });
     if (p === '/api') {
-      return sendJson(res, { service: 'adsb-monitor', endpoints: ['/api/status', '/api/coverage', '/api/settings', '/api/watch', '/api/alerts', '/api/classes', '/api/test-alert', '/api/auth', '/api/login', SKYAWARE, '/status.json'] });
+      return sendJson(res, { service: 'adsb-monitor', endpoints: ['/api/status', '/api/coverage', '/api/settings', '/api/watch', '/api/alerts', '/api/routes', '/api/classes', '/api/test-alert', '/api/auth', '/api/login', SKYAWARE, '/status.json'] });
     }
     sendJson(res, { error: 'not found' }, 404);
   } catch (e) {
@@ -974,6 +1057,8 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => log(`adsb-monitor on :${PORT} (dashboard at /), ${AGG ? `aircraft from ${AGG.name} (${RADIUS_NM} nm around LAT/LON)` : `PiAware ${PIAWARE}${SKYAWARE}${SOURCE !== 'piaware' ? ` (unknown SOURCE=${SOURCE}: use piaware, adsb.lol or adsb.fi)` : ''}`}, alerts: ${[HA_WEBHOOK && 'HA webhook', NTFY_URL && 'ntfy'].filter(Boolean).join(' + ') || 'none set'}, ${AUTH.required ? 'guests read-only (ADMIN_PASSWORD set)' : 'no sign-in (ADMIN_PASSWORD not set)'}`));
 setInterval(poll, POLL_MS);
+setInterval(refreshRoutes, 30_000); // adsb.im asks for batches at least 30 s apart
+setTimeout(refreshRoutes, 5000);
 poll();
 setInterval(saveCoverage, SAVE_MS);
 loadDb();

@@ -2,8 +2,8 @@
 // Live aircraft from the PiAware/SkyAware receiver (dump1090-fa's data/aircraft.json, which has CORS open) as a card
 // with four tabs: a map (range rings, trails, altitude colours, like SkyAware's), a sortable aircraft list, the
 // selected flight's status (route, progress, ETA, aircraft, live data) and the original SkyAware page.
-// Routes, airline and aircraft details come from adsbdb.com (routes checked here against the plane's position),
-// photos from adsbdb or Planespotters. All are free, keyless and CORS-enabled.
+// Routes from adsb-monitor's /api/routes (adsb.im, position-checked) or else adsbdb.com (checked here against the
+// plane's position); airline and aircraft details from adsbdb.com, photos from adsbdb or Planespotters. All are free, keyless and CORS-enabled.
 // The ETA is an estimate: great-circle distance to go / current ground speed.
 // Coverage history, phone alerts (squawks, military, helicopters, watched flights landing) and a CORS proxy for use
 // over a VPN come from adsb-monitor (https://github.com/jchisholm59/adsb-monitor), a small always-on service.
@@ -619,11 +619,30 @@ class SkyAwareCard extends HTMLElement {
     this._renderAll();
   }
 
-  // Routes from adsbdb's callsign database, a few per pass, nearest planes first. adsb.im's routeset API (used until
-  // 2026-11) now refuses browser/app use (403: wants a contact User-Agent, plain http and 30 s batching). adsbdb has no
-  // position check, so it's done here: a route whose great-circle path the plane is far off is marked not plausible.
+  // Routes: from adsb-monitor's /api/routes when there is one (adsb.im's position-checked routeset, batched there with
+  // the contact User-Agent adsb.im's rules require since 2026-11, adsbdb for the rest), else straight from adsbdb's
+  // callsign database, a few per pass, nearest first, with the position check done here.
   async _lookupRoutes() {
     if (this._rtBusy) return;
+    this._rtBusy = true;
+    try {
+      if (this._config.monitor?.length && Date.now() > (this._rtMonDown || 0)) {
+        try {
+          const d = await this._mon("/api/routes");
+          const now = Date.now();
+          for (const [cs, r] of Object.entries(d?.routes || {})) STORE.routes.set(cs, { t: now, r, mon: true });
+          this._renderAll();
+          return;
+        } catch (e) {
+          this._rtMonDown = Date.now() + 5 * 60000; // older monitor (no /api/routes) or unreachable: adsbdb for a while
+        }
+      }
+      await this._lookupRoutesAdsbdb();
+    } finally {
+      this._rtBusy = false;
+    }
+  }
+  async _lookupRoutesAdsbdb() {
     const now = Date.now();
     const want = this._acs
       .filter((a) => {
@@ -635,31 +654,26 @@ class SkyAwareCard extends HTMLElement {
       .sort((a, b) => (b.hex === this._sel) - (a.hex === this._sel) || (a._dist ?? 9e9) - (b._dist ?? 9e9))
       .slice(0, 8);
     if (!want.length) return;
-    this._rtBusy = true;
     const apt = (x) => x && x.latitude !== undefined && { iata: x.iata_code || "", icao: x.icao_code || "", name: x.name || "",
       location: x.municipality || "", country: x.country_iso_name || "", lat: x.latitude, lon: x.longitude };
-    try {
-      await Promise.all(want.map(async (a) => {
-        const cs = callsign(a);
-        let r = null;
-        try {
-          const fr = (await getJSON(`https://api.adsbdb.com/v0/callsign/${encodeURIComponent(cs)}`))?.response?.flightroute || null;
-          if (!STORE.airlines.has(cs)) STORE.airlines.set(cs, fr);
-          const o = apt(fr?.origin), d = apt(fr?.destination);
-          if (o && d) {
-            const direct = dist(o.lat, o.lon, d.lat, d.lon);
-            const detour = dist(o.lat, o.lon, a.lat, a.lon) + dist(a.lat, a.lon, d.lat, d.lon) - direct;
-            r = { codes: `${o.iata || o.icao}-${d.iata || d.icao}`, airports: [o, d], plausible: detour <= Math.max(150, direct * 0.5) };
-          }
-        } catch (e) {
-          return; // network/rate limit: try again next pass
+    await Promise.all(want.map(async (a) => {
+      const cs = callsign(a);
+      let r = null;
+      try {
+        const fr = (await getJSON(`https://api.adsbdb.com/v0/callsign/${encodeURIComponent(cs)}`))?.response?.flightroute || null;
+        if (!STORE.airlines.has(cs)) STORE.airlines.set(cs, fr);
+        const o = apt(fr?.origin), d = apt(fr?.destination);
+        if (o && d) {
+          const direct = dist(o.lat, o.lon, d.lat, d.lon);
+          const detour = dist(o.lat, o.lon, a.lat, a.lon) + dist(a.lat, a.lon, d.lat, d.lon) - direct;
+          r = { codes: `${o.iata || o.icao}-${d.iata || d.icao}`, airports: [o, d], plausible: detour <= Math.max(150, direct * 0.5) };
         }
-        STORE.routes.set(cs, { t: now, r });
-      }));
-      this._renderAll();
-    } finally {
-      this._rtBusy = false;
-    }
+      } catch (e) {
+        return; // network/rate limit: try again next pass
+      }
+      STORE.routes.set(cs, { t: now, r });
+    }));
+    this._renderAll();
   }
 
   // Aircraft details (type, registration, owner), one at a time, selected aircraft first.

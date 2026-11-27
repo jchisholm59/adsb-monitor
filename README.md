@@ -352,6 +352,7 @@ address out for 15 minutes. With no `ADMIN_PASSWORD`, nothing changes: no sign-i
 | `DASHBOARD_URL` | none | Opened when you tap an ntfy alert, e.g. `http://192.168.1.20:7100/` |
 | `ADMIN_PASSWORD` | none | Guests can look but not change anything; sign in on the Alerts tab (see [Sharing it with guests](#sharing-it-with-guests)) |
 | `SDR_URL`, `SDR_CHANNELS` | none | The Listen panel (the airband, a [Pi-SDR](https://github.com/jchisholm59/Pi-SDR) receiver) for the dashboard and the add-on, without writing the card's `sdr` option: the receiver's address, and channels as `Name:MHz;...` with `:noscan` to leave one out of Scan, e.g. `Tower:118.4;Ground:121.9;ATIS:121.0:noscan`. No default: airband channels depend on the airport (with only `SDR_URL`, the Listen panel says how to add them). A card `sdr` option (or the add-on's `card_options`) wins. The browser plays the audio straight from the receiver, so it must be able to reach it (e.g. over Tailscale away from home) |
+| `ROUTES_CONTACT` | this project's GitHub page | The contact (an e-mail address or website) in the User-Agent sent to adsb.im's route API, whose [rules](https://adsb.im/api) require one: since 2026-11 it refuses requests without it (HTTP 403). Set your own if you'd rather adsb.im reached you than this project |
 | `CESIUM_TOKEN` | none | Cesium ion token for the Cockpit tab, for everyone using the dashboard (and guests) |
 | `ADMIN_TRUSTED_IPS` | none | Addresses always treated as signed in (the HA add-on sets Home Assistant's ingress proxy) |
 | `PORT` | `7100` | Dashboard, API and proxy port |
@@ -379,9 +380,11 @@ address out for 15 minutes. With no `ADMIN_PASSWORD`, nothing changes: no sign-i
 
 ## Data sources
 All free, keyless and CORS-enabled. Lookups are cached.
-- Routes: [adsbdb.com](https://www.adsbdb.com) by callsign, checked against the aircraft's position (a plane far off
-  the great-circle path is flagged or skipped), since the free route databases are often out of date. Until 2026-11
-  this was adsb.im's `routeset`, which now refuses app use (HTTP 403).
+- Routes: [adsb.im](https://adsb.im) `routeset`, which checks each route against the aircraft's position (the free route
+  databases are often out of date). The monitor asks for every callsign in view in one request every 30 s, over http,
+  with a User-Agent naming a contact (`ROUTES_CONTACT`), as [adsb.im's API rules](https://adsb.im/api) require; the card
+  reads the results from `/api/routes`. Callsigns adsb.im doesn't know come from [adsbdb.com](https://www.adsbdb.com),
+  checked against the position here. The card on its own (no monitor) uses adsbdb directly.
 - Airline, IATA flight number, aircraft type, registration and owner: [adsbdb.com](https://www.adsbdb.com).
 - Photos: adsbdb and [Planespotters.net](https://www.planespotters.net) (with photographer credit).
 - Military flags and helicopter types: [tar1090-db](https://github.com/wiedehopf/tar1090-db) and SkyAware's own
