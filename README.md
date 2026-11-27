@@ -379,8 +379,9 @@ address out for 15 minutes. With no `ADMIN_PASSWORD`, nothing changes: no sign-i
 
 ## Data sources
 All free, keyless and CORS-enabled. Lookups are cached.
-- Routes: [adsb.im](https://adsb.im) `routeset`, which checks each route against the aircraft's position. That
-  matters: the bigger free route databases are often years out of date.
+- Routes: [adsbdb.com](https://www.adsbdb.com) by callsign, checked against the aircraft's position (a plane far off
+  the great-circle path is flagged or skipped), since the free route databases are often out of date. Until 2026-11
+  this was adsb.im's `routeset`, which now refuses app use (HTTP 403).
 - Airline, IATA flight number, aircraft type, registration and owner: [adsbdb.com](https://www.adsbdb.com).
 - Photos: adsbdb and [Planespotters.net](https://www.planespotters.net) (with photographer credit).
 - Military flags and helicopter types: [tar1090-db](https://github.com/wiedehopf/tar1090-db) and SkyAware's own

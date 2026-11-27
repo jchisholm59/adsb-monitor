@@ -446,17 +446,19 @@ async function photoOf(hex) {
     return '';
   }
 }
+// Route from adsbdb's callsign database, checked against the plane's position (a plane far off the great-circle path
+// gets no route: the database can be out of date). adsb.im's routeset API, used until 2026-11, now answers 403.
 async function routeOf(a) {
   const cs = callsign(a);
   if (!cs || a.lat === undefined) return '';
   try {
-    const r = await getJson('https://adsb.im/api/0/routeset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planes: [{ callsign: cs, lat: a.lat, lng: a.lon }] }),
-    }, 5000);
-    const x = r?.[0];
-    return x && x._airport_codes_iata && x._airport_codes_iata !== 'unknown' && x.plausible !== false ? x._airport_codes_iata.replace(/-/g, '→') : '';
+    const fr = (await getJson(`https://api.adsbdb.com/v0/callsign/${encodeURIComponent(cs)}`, {}, 5000))?.response?.flightroute;
+    const o = fr?.origin, d = fr?.destination;
+    if (o?.latitude === undefined || d?.latitude === undefined) return '';
+    const direct = dist(o.latitude, o.longitude, d.latitude, d.longitude);
+    const detour = dist(o.latitude, o.longitude, a.lat, a.lon) + dist(a.lat, a.lon, d.latitude, d.longitude) - direct;
+    if (detour > Math.max(150, direct * 0.5)) return '';
+    return `${o.iata_code || o.icao_code}→${d.iata_code || d.icao_code}`;
   } catch (e) {
     return '';
   }
